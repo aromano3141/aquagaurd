@@ -2,7 +2,8 @@
 Data Pipeline
 
 Handles loading and parsing EPANET .inp files, running hydraulic simulations
-via EPyT-Flow, and generating synthetic leak scenarios for GNN training.
+via WNTR, and generating synthetic leak scenarios for GNN training.
+Extracts both pressure and flow data from simulations.
 """
 
 import wntr
@@ -60,17 +61,22 @@ def run_hydraulic_simulation(
     wn: wntr.network.WaterNetworkModel,
     duration_hours: int = 336,
     timestep_minutes: int = 5,
-) -> pd.DataFrame:
+) -> dict:
     """
-    Run a hydraulic simulation and return pressure time-series at all junctions.
+    Run a hydraulic simulation and return pressure + flow time-series.
 
     Args:
         wn: The WNTR network model.
-        duration_hours: Simulation duration in hours (default: 14 days = 336h).
+        duration_hours: Simulation duration in hours (default: 14 days).
         timestep_minutes: Reporting timestep in minutes.
 
     Returns:
-        DataFrame with time index and pressure at each junction.
+        Dictionary with:
+        - pressures: DataFrame (time x junctions) of pressure values
+        - flows: DataFrame (time x pipes) of flowrate values
+        - demands: DataFrame (time x junctions) of demand values
+        - head: DataFrame (time x junctions) of head values
+        - velocity: DataFrame (time x pipes) of velocity values
     """
     wn.options.time.duration = duration_hours * 3600
     wn.options.time.hydraulic_timestep = timestep_minutes * 60
@@ -79,12 +85,38 @@ def run_hydraulic_simulation(
     sim = wntr.sim.EpanetSimulator(wn)
     results = sim.run_sim()
 
-    pressures = results.node["pressure"]
-    # Filter to junctions only
     junction_names = wn.junction_name_list
-    pressures = pressures[junction_names]
+    pipe_names = wn.pipe_name_list
 
-    return pressures
+    return {
+        "pressures": results.node["pressure"][junction_names],
+        "demands": results.node["demand"][junction_names],
+        "head": results.node["head"][junction_names],
+        "flows": results.link["flowrate"][pipe_names],
+        "velocity": results.link["velocity"][pipe_names],
+    }
+
+
+def compute_flow_pressure_ratio(sim_results: dict) -> pd.DataFrame:
+    """
+    Compute flow-to-pressure ratio at each junction by averaging
+    the absolute flow of adjacent pipes and dividing by pressure.
+    A deviation from baseline ratio indicates a potential leak.
+
+    Args:
+        sim_results: Output from run_hydraulic_simulation.
+
+    Returns:
+        DataFrame of flow-pressure ratios (time x junctions).
+    """
+    pressures = sim_results["pressures"]
+    flows = sim_results["flows"]
+
+    # Use mean absolute flow as a proxy for junction-level flow
+    mean_flow = flows.abs().mean(axis=1)
+    # Broadcast and divide (avoid div by zero)
+    ratio = pressures.apply(lambda col: mean_flow / col.replace(0, np.nan))
+    return ratio.fillna(0)
 
 
 def inject_leak(
@@ -109,11 +141,9 @@ def inject_leak(
     """
     junction = wn.get_node(junction_name)
     leak_area = np.pi * (leak_diameter / 2) ** 2
-    # Discharge coefficient for orifice flow
-    cd = 0.75
+    cd = 0.75  # Discharge coefficient for orifice flow
     emitter_coeff = cd * leak_area * np.sqrt(2 * 9.81)
     junction.emitter_coefficient = emitter_coeff
-
     return wn
 
 
@@ -126,9 +156,7 @@ def generate_synthetic_dataset(
 ) -> dict:
     """
     Generate a synthetic training dataset with normal and leak scenarios.
-
-    For each scenario, injects a leak at a random junction with random severity,
-    runs a simulation, and collects the pressure time-series.
+    Includes both pressure and flow data for each scenario.
 
     Args:
         inp_path: Path to the base .inp file.
@@ -139,14 +167,16 @@ def generate_synthetic_dataset(
 
     Returns:
         Dictionary with:
-        - baseline_pressures: DataFrame of pressure under normal conditions
-        - leak_scenarios: list of dicts with {pressures, leak_junction, leak_diameter}
+        - baseline: dict of pressure/flow/demand DataFrames under normal conditions
+        - leak_scenarios: list of dicts with simulation results + leak metadata
+        - topology: network topology info
     """
     rng = np.random.default_rng(seed)
 
     # Generate baseline
     wn_baseline = load_network(inp_path)
-    baseline_pressures = run_hydraulic_simulation(wn_baseline, duration_hours=baseline_hours)
+    topology = extract_topology(wn_baseline)
+    baseline = run_hydraulic_simulation(wn_baseline, duration_hours=baseline_hours)
 
     junction_names = wn_baseline.junction_name_list
     leak_scenarios = []
@@ -161,21 +191,24 @@ def generate_synthetic_dataset(
         inject_leak(wn_leak, leak_junction, leak_diameter)
 
         try:
-            leak_pressures = run_hydraulic_simulation(
+            sim_results = run_hydraulic_simulation(
                 wn_leak, duration_hours=leak_duration_hours
             )
             leak_scenarios.append({
-                "pressures": leak_pressures,
+                "pressures": sim_results["pressures"],
+                "flows": sim_results["flows"],
+                "demands": sim_results["demands"],
                 "leak_junction": leak_junction,
                 "leak_diameter": leak_diameter,
+                "leak_rate_estimate": 0.75 * np.pi * (leak_diameter / 2) ** 2 * np.sqrt(2 * 9.81 * 30),
                 "scenario_id": i,
             })
         except Exception as e:
-            # Some leak configurations may cause solver failures — skip them
             print(f"Scenario {i} failed (junction={leak_junction}, d={leak_diameter:.4f}): {e}")
             continue
 
     return {
-        "baseline_pressures": baseline_pressures,
+        "baseline": baseline,
         "leak_scenarios": leak_scenarios,
+        "topology": topology,
     }
