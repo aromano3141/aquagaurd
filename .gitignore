@@ -53,6 +53,9 @@ __pycache__/
 *.egg-info/
 *.egg
 .venv/
+*.bin
+*.rpt
+temp.inp
 
 # Model artifacts
 model/trained_models/
@@ -80,7 +83,4 @@ data/*.h5
 .DS_Store
 Thumbs.db
 
-# Hackathon notes (not for repo)
-hackathonidea.md
-hackathonidea_v2.md
-oldlilawriteup.txt
+

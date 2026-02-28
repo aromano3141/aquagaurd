@@ -8,7 +8,6 @@ export default function NetworkMap({ network }) {
     const isDragging = useRef(false)
     const lastMouse = useRef({ x: 0, y: 0 })
 
-    // Compute bounds from network data
     const getBounds = useCallback(() => {
         if (!network?.nodes?.length) return { minX: 0, maxX: 1, minY: 0, maxY: 1 }
         let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity
@@ -18,28 +17,25 @@ export default function NetworkMap({ network }) {
             minY = Math.min(minY, node.y)
             maxY = Math.max(maxY, node.y)
         }
-        const padX = (maxX - minX) * 0.05 || 1
-        const padY = (maxY - minY) * 0.05 || 1
+        const padX = (maxX - minX) * 0.08 || 1
+        const padY = (maxY - minY) * 0.08 || 1
         return { minX: minX - padX, maxX: maxX + padX, minY: minY - padY, maxY: maxY + padY }
     }, [network])
 
-    // World coords to canvas coords
     const toCanvas = useCallback((wx, wy, bounds, width, height, tf) => {
         const scaleX = width / (bounds.maxX - bounds.minX)
         const scaleY = height / (bounds.maxY - bounds.minY)
-        const s = Math.min(scaleX, scaleY) * 0.9
+        const s = Math.min(scaleX, scaleY) * 0.85
         const cx = width / 2
         const cy = height / 2
         const mx = (bounds.minX + bounds.maxX) / 2
         const my = (bounds.minY + bounds.maxY) / 2
-
         return {
             x: (wx - mx) * s * tf.scale + cx + tf.x,
-            y: -(wy - my) * s * tf.scale + cy + tf.y,  // flip Y
+            y: -(wy - my) * s * tf.scale + cy + tf.y,
         }
     }, [])
 
-    // Draw the network
     useEffect(() => {
         const canvas = canvasRef.current
         const container = containerRef.current
@@ -54,7 +50,20 @@ export default function NetworkMap({ network }) {
 
         const ctx = canvas.getContext('2d')
         ctx.scale(dpr, dpr)
-        ctx.clearRect(0, 0, rect.width, rect.height)
+
+        // Dark background
+        ctx.fillStyle = '#050507'
+        ctx.fillRect(0, 0, rect.width, rect.height)
+
+        // Subtle radial gradient in center
+        const gradient = ctx.createRadialGradient(
+            rect.width / 2, rect.height / 2, 0,
+            rect.width / 2, rect.height / 2, Math.max(rect.width, rect.height) * 0.6
+        )
+        gradient.addColorStop(0, 'rgba(6, 182, 212, 0.02)')
+        gradient.addColorStop(1, 'transparent')
+        ctx.fillStyle = gradient
+        ctx.fillRect(0, 0, rect.width, rect.height)
 
         const bounds = getBounds()
         const nodeMap = {}
@@ -62,15 +71,15 @@ export default function NetworkMap({ network }) {
             nodeMap[node.id] = node
         }
 
-        // Draw edges (pipes)
-        ctx.lineWidth = 1.5
-        ctx.strokeStyle = '#3f3f46'
+        // Draw pipes with subtle gradient
+        ctx.lineWidth = 1
+        ctx.strokeStyle = 'rgba(90, 90, 130, 0.35)'
+        ctx.lineCap = 'round'
         ctx.beginPath()
         for (const edge of network.edges) {
             const start = nodeMap[edge.start_node]
             const end = nodeMap[edge.end_node]
             if (!start || !end) continue
-
             const p1 = toCanvas(start.x, start.y, bounds, rect.width, rect.height, transform)
             const p2 = toCanvas(end.x, end.y, bounds, rect.width, rect.height, transform)
             ctx.moveTo(p1.x, p1.y)
@@ -78,43 +87,109 @@ export default function NetworkMap({ network }) {
         }
         ctx.stroke()
 
-        // Draw nodes
+        // Draw junction nodes
         for (const node of network.nodes) {
             const p = toCanvas(node.x, node.y, bounds, rect.width, rect.height, transform)
             const isHovered = hoveredNode === node.id
 
             if (node.type === 'reservoir') {
+                // Reservoir: bright blue with glow
+                if (isHovered) {
+                    ctx.shadowColor = '#3b82f6'
+                    ctx.shadowBlur = 12
+                }
                 ctx.fillStyle = '#3b82f6'
                 ctx.beginPath()
                 ctx.arc(p.x, p.y, isHovered ? 8 : 6, 0, Math.PI * 2)
                 ctx.fill()
+                ctx.shadowBlur = 0
+
+                // Ring
+                ctx.strokeStyle = 'rgba(59, 130, 246, 0.3)'
+                ctx.lineWidth = 1
+                ctx.beginPath()
+                ctx.arc(p.x, p.y, 10, 0, Math.PI * 2)
+                ctx.stroke()
             } else if (node.type === 'tank') {
+                if (isHovered) {
+                    ctx.shadowColor = '#8b5cf6'
+                    ctx.shadowBlur = 12
+                }
                 ctx.fillStyle = '#8b5cf6'
                 ctx.beginPath()
                 ctx.arc(p.x, p.y, isHovered ? 7 : 5, 0, Math.PI * 2)
                 ctx.fill()
+                ctx.shadowBlur = 0
             } else {
-                ctx.fillStyle = isHovered ? '#06b6d4' : '#52525b'
+                // Junction: subtle dot
+                ctx.fillStyle = isHovered ? '#06b6d4' : 'rgba(100, 100, 140, 0.5)'
                 ctx.beginPath()
-                ctx.arc(p.x, p.y, isHovered ? 4 : 2, 0, Math.PI * 2)
+                ctx.arc(p.x, p.y, isHovered ? 4.5 : 1.8, 0, Math.PI * 2)
                 ctx.fill()
+
+                if (isHovered) {
+                    ctx.shadowColor = '#06b6d4'
+                    ctx.shadowBlur = 10
+                    ctx.fillStyle = '#06b6d4'
+                    ctx.beginPath()
+                    ctx.arc(p.x, p.y, 4.5, 0, Math.PI * 2)
+                    ctx.fill()
+                    ctx.shadowBlur = 0
+                }
             }
         }
 
-        // Draw hovered node label
-        if (hoveredNode) {
+        // Hovered node tooltip
+        if (hoveredNode && nodeMap[hoveredNode]) {
             const node = nodeMap[hoveredNode]
-            if (node) {
-                const p = toCanvas(node.x, node.y, bounds, rect.width, rect.height, transform)
-                ctx.font = '11px Inter, system-ui, sans-serif'
-                ctx.fillStyle = '#fafafa'
-                ctx.textAlign = 'left'
-                ctx.fillText(`${node.id} (elev: ${node.elevation?.toFixed(1)}m)`, p.x + 10, p.y - 5)
-            }
+            const p = toCanvas(node.x, node.y, bounds, rect.width, rect.height, transform)
+
+            const label = `${node.id}`
+            const detail = `elevation: ${node.elevation?.toFixed(1)}m`
+
+            ctx.font = '600 12px Inter, system-ui, sans-serif'
+            const labelWidth = ctx.measureText(label).width
+            ctx.font = '400 10px Inter, system-ui, sans-serif'
+            const detailWidth = ctx.measureText(detail).width
+            const boxWidth = Math.max(labelWidth, detailWidth) + 20
+            const boxHeight = 42
+            const boxX = p.x + 14
+            const boxY = p.y - boxHeight / 2
+
+            // Tooltip background
+            ctx.fillStyle = 'rgba(12, 12, 16, 0.92)'
+            ctx.strokeStyle = 'rgba(6, 182, 212, 0.3)'
+            ctx.lineWidth = 1
+            roundRect(ctx, boxX, boxY, boxWidth, boxHeight, 8)
+            ctx.fill()
+            ctx.stroke()
+
+            // Tooltip text
+            ctx.font = '600 12px Inter, system-ui, sans-serif'
+            ctx.fillStyle = '#f0f0f5'
+            ctx.textAlign = 'left'
+            ctx.fillText(label, boxX + 10, boxY + 17)
+            ctx.font = '400 10px Inter, system-ui, sans-serif'
+            ctx.fillStyle = '#9898b0'
+            ctx.fillText(detail, boxX + 10, boxY + 33)
         }
     }, [network, transform, hoveredNode, getBounds, toCanvas])
 
-    // Mouse handlers for pan and hover
+    // Helper: rounded rect
+    function roundRect(ctx, x, y, w, h, r) {
+        ctx.beginPath()
+        ctx.moveTo(x + r, y)
+        ctx.lineTo(x + w - r, y)
+        ctx.quadraticCurveTo(x + w, y, x + w, y + r)
+        ctx.lineTo(x + w, y + h - r)
+        ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h)
+        ctx.lineTo(x + r, y + h)
+        ctx.quadraticCurveTo(x, y + h, x, y + h - r)
+        ctx.lineTo(x, y + r)
+        ctx.quadraticCurveTo(x, y, x + r, y)
+        ctx.closePath()
+    }
+
     const handleMouseDown = (e) => {
         isDragging.current = true
         lastMouse.current = { x: e.clientX, y: e.clientY }
@@ -132,14 +207,13 @@ export default function NetworkMap({ network }) {
             return
         }
 
-        // Hit test for hover
         const rect = canvas.getBoundingClientRect()
         const mx = e.clientX - rect.left
         const my = e.clientY - rect.top
         const bounds = getBounds()
 
         let closest = null
-        let closestDist = 20 // max distance in pixels
+        let closestDist = 20
 
         for (const node of network.nodes) {
             const p = toCanvas(node.x, node.y, bounds, rect.width, rect.height, transform)
@@ -152,9 +226,7 @@ export default function NetworkMap({ network }) {
         setHoveredNode(closest)
     }
 
-    const handleMouseUp = () => {
-        isDragging.current = false
-    }
+    const handleMouseUp = () => { isDragging.current = false }
 
     const handleWheel = (e) => {
         e.preventDefault()
@@ -165,20 +237,16 @@ export default function NetworkMap({ network }) {
         }))
     }
 
-    // Resize observer
     useEffect(() => {
         const container = containerRef.current
         if (!container) return
-        const observer = new ResizeObserver(() => {
-            setTransform(prev => ({ ...prev })) // trigger re-render
-        })
+        const observer = new ResizeObserver(() => setTransform(prev => ({ ...prev })))
         observer.observe(container)
         return () => observer.disconnect()
     }, [])
 
     return (
-        <div ref={containerRef} className="absolute inset-0"
-            style={{ backgroundColor: 'var(--color-bg-primary)' }}>
+        <div ref={containerRef} className="absolute inset-0">
             <canvas
                 ref={canvasRef}
                 className="w-full h-full cursor-grab active:cursor-grabbing"
@@ -189,59 +257,76 @@ export default function NetworkMap({ network }) {
                 onWheel={handleWheel}
             />
 
-            {/* Map controls overlay */}
-            <div className="absolute bottom-4 right-4 flex flex-col gap-2">
-                <button
-                    onClick={() => setTransform(prev => ({ ...prev, scale: prev.scale * 1.3 }))}
-                    className="w-9 h-9 rounded-lg flex items-center justify-center text-lg font-bold cursor-pointer border transition-colors"
-                    style={{
-                        backgroundColor: 'var(--color-bg-secondary)',
-                        borderColor: 'var(--color-border)',
-                        color: 'var(--color-text-primary)',
-                    }}
-                >+</button>
-                <button
-                    onClick={() => setTransform(prev => ({ ...prev, scale: prev.scale * 0.7 }))}
-                    className="w-9 h-9 rounded-lg flex items-center justify-center text-lg font-bold cursor-pointer border transition-colors"
-                    style={{
-                        backgroundColor: 'var(--color-bg-secondary)',
-                        borderColor: 'var(--color-border)',
-                        color: 'var(--color-text-primary)',
-                    }}
-                >−</button>
-                <button
-                    onClick={() => setTransform({ x: 0, y: 0, scale: 1 })}
-                    className="w-9 h-9 rounded-lg flex items-center justify-center text-xs font-medium cursor-pointer border transition-colors"
-                    style={{
-                        backgroundColor: 'var(--color-bg-secondary)',
-                        borderColor: 'var(--color-border)',
-                        color: 'var(--color-text-secondary)',
-                    }}
-                >⟲</button>
+            {/* Zoom controls */}
+            <div className="absolute bottom-4 right-4 flex flex-col gap-1.5">
+                {[
+                    { label: '+', action: () => setTransform(prev => ({ ...prev, scale: prev.scale * 1.3 })) },
+                    { label: '−', action: () => setTransform(prev => ({ ...prev, scale: prev.scale * 0.7 })) },
+                    { label: '⟲', action: () => setTransform({ x: 0, y: 0, scale: 1 }) },
+                ].map(btn => (
+                    <button
+                        key={btn.label}
+                        onClick={btn.action}
+                        className="w-8 h-8 rounded-lg flex items-center justify-center text-sm font-medium cursor-pointer transition-all duration-200"
+                        style={{
+                            backgroundColor: 'rgba(12, 12, 16, 0.85)',
+                            border: '1px solid var(--color-border)',
+                            color: 'var(--color-text-secondary)',
+                            backdropFilter: 'blur(8px)',
+                        }}
+                        onMouseEnter={e => {
+                            e.target.style.borderColor = 'var(--color-accent)'
+                            e.target.style.color = 'var(--color-accent)'
+                        }}
+                        onMouseLeave={e => {
+                            e.target.style.borderColor = 'var(--color-border)'
+                            e.target.style.color = 'var(--color-text-secondary)'
+                        }}
+                    >{btn.label}</button>
+                ))}
             </div>
 
             {/* Legend */}
-            <div className="absolute top-4 right-4 px-4 py-3 rounded-xl border"
-                style={{ backgroundColor: 'var(--color-bg-secondary)', borderColor: 'var(--color-border)' }}>
-                <p className="text-xs font-medium mb-2" style={{ color: 'var(--color-text-secondary)' }}>Legend</p>
-                <div className="space-y-1.5">
-                    <div className="flex items-center gap-2">
-                        <span className="w-3 h-3 rounded-full bg-zinc-500"></span>
-                        <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>Junction</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                        <span className="w-3 h-3 rounded-full bg-blue-500"></span>
-                        <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>Reservoir</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                        <span className="w-3 h-3 rounded-full bg-violet-500"></span>
-                        <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>Tank</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                        <span className="w-6 h-0.5 bg-zinc-600 rounded"></span>
-                        <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>Pipe</span>
-                    </div>
+            <div className="absolute top-4 right-4 px-4 py-3 rounded-xl glass"
+                style={{
+                    backgroundColor: 'rgba(12, 12, 16, 0.8)',
+                    border: '1px solid var(--color-border-subtle)',
+                }}>
+                <p className="text-[10px] font-semibold uppercase tracking-wider mb-2"
+                    style={{ color: 'var(--color-text-muted)' }}>Legend</p>
+                <div className="space-y-2">
+                    {[
+                        { color: 'rgba(100,100,140,0.5)', label: 'Junction', shape: 'circle' },
+                        { color: '#3b82f6', label: 'Reservoir', shape: 'circle' },
+                        { color: '#8b5cf6', label: 'Tank', shape: 'circle' },
+                        { color: null, label: 'Pipe', shape: 'line' },
+                    ].map(item => (
+                        <div key={item.label} className="flex items-center gap-2.5">
+                            {item.shape === 'circle' ? (
+                                <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: item.color }}></span>
+                            ) : (
+                                <span className="w-4 h-[2px] rounded" style={{ backgroundColor: 'rgba(90,90,130,0.5)' }}></span>
+                            )}
+                            <span className="text-[11px]" style={{ color: 'var(--color-text-muted)' }}>{item.label}</span>
+                        </div>
+                    ))}
                 </div>
+            </div>
+
+            {/* Network info overlay */}
+            <div className="absolute bottom-4 left-4 px-3 py-2 rounded-lg glass text-[11px]"
+                style={{
+                    backgroundColor: 'rgba(12, 12, 16, 0.8)',
+                    border: '1px solid var(--color-border-subtle)',
+                    color: 'var(--color-text-muted)',
+                }}>
+                <span className="font-mono">
+                    {transform.scale.toFixed(1)}x
+                </span>
+                <span className="mx-2">·</span>
+                <span>{network?.nodes?.length} nodes</span>
+                <span className="mx-2">·</span>
+                <span>{network?.edges?.length} edges</span>
             </div>
         </div>
     )
