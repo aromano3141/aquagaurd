@@ -1,71 +1,71 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 @import "tailwindcss";
 
+/* ── AquaGuard Dark Theme ──────────────────────────────────────────────── */
 @theme {
-    --color-bg-primary: #050507;
-    --color-bg-secondary: #0c0c10;
-    --color-bg-tertiary: #16161d;
-    --color-bg-elevated: #1c1c26;
-    --color-border: #2a2a3a;
-    --color-border-subtle: #1e1e2e;
-    --color-text-primary: #f0f0f5;
-    --color-text-secondary: #9898b0;
-    --color-text-muted: #5e5e7a;
-    --color-accent: #06b6d4;
-    --color-accent-hover: #22d3ee;
-    --color-accent-dim: #0e7490;
-    --color-danger: #ef4444;
-    --color-warning: #f59e0b;
-    --color-success: #22c55e;
-    --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+  --color-bg-primary: #050710;
+  --color-bg-secondary: #0a0d1a;
+  --color-bg-card: #0a0c1c;
+  --color-bg-card-hover: #0e1226;
+  --color-accent: #4facfe;
+  --color-accent-end: #00f2fe;
+  --color-text: #c0c8d4;
+  --color-text-dim: #8a95a8;
+  --color-text-dimmer: #5a6577;
+  --color-text-dimmest: #3d4556;
+  --color-border: rgba(79, 172, 254, 0.1);
+  --color-border-subtle: rgba(79, 172, 254, 0.06);
+  --color-green: #2ed573;
+  --color-green-light: #7bed9f;
+  --color-red: #ff4757;
+  --color-red-light: #ff6b81;
+  --color-orange: #ffa502;
+  --color-orange-light: #ffda79;
 }
 
-@layer base {
-    * {
-        margin: 0;
-        padding: 0;
-        box-sizing: border-box;
-    }
-
-    html,
-    body,
-    #root {
-        height: 100%;
-        width: 100%;
-    }
-
-    body {
-        font-family: var(--font-sans);
-        background-color: var(--color-bg-primary);
-        color: var(--color-text-primary);
-        font-synthesis: none;
-        text-rendering: optimizeLegibility;
-        -webkit-font-smoothing: antialiased;
-        -moz-osx-font-smoothing: grayscale;
-    }
-
-    ::-webkit-scrollbar {
-        width: 5px;
-    }
-
-    ::-webkit-scrollbar-track {
-        background: transparent;
-    }
-
-    ::-webkit-scrollbar-thumb {
-        background: var(--color-border);
-        border-radius: 10px;
-    }
+@font-face {
+  font-family: 'Inter';
+  src: url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
 }
 
-@layer utilities {
-    .glass {
-        backdrop-filter: blur(16px) saturate(180%);
-        -webkit-backdrop-filter: blur(16px) saturate(180%);
-    }
+html, body {
+  font-family: 'Inter', system-ui, sans-serif;
+  background: linear-gradient(135deg, var(--color-bg-primary) 0%, var(--color-bg-secondary) 40%, #0d1020 100%);
+  color: var(--color-text);
+  min-height: 100vh;
+  margin: 0;
+}
 
-    .glow-accent {
-        box-shadow: 0 0 20px rgba(6, 182, 212, 0.15),
-            0 0 60px rgba(6, 182, 212, 0.05);
-    }
+/* ── Scrollbar ─────────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(79, 172, 254, 0.2); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(79, 172, 254, 0.4); }
+
+/* ── Utility: gradient text ────────────────────────────────────────────── */
+.gradient-text {
+  background: linear-gradient(135deg, var(--color-accent) 0%, var(--color-accent-end) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.gradient-text-green {
+  background: linear-gradient(135deg, var(--color-green), var(--color-green-light));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.gradient-text-red {
+  background: linear-gradient(135deg, var(--color-red), var(--color-red-light));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.gradient-text-orange {
+  background: linear-gradient(135deg, var(--color-orange), var(--color-orange-light));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
 }

@@ -1,86 +1,26 @@
-# Dependencies
+# Generated / Dependencies
 node_modules/
-jspm_packages/
-web_modules/
-.pnp.*
-.yarn/*
-!.yarn/patches
-!.yarn/plugins
-!.yarn/releases
-!.yarn/sdks
-!.yarn/versions
-
-# Build output
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
 dist/
 build/
-out/
-.next/
-.nuxt/
-
-# Logs
-logs/
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-
-# Runtime data
-pids/
-*.pid
-*.seed
-*.pid.lock
-
-# Testing & Coverage
-coverage/
-*.lcov
-.nyc_output/
-
-# Caches
-.cache/
-.parcel-cache/
-.eslintcache
-.stylelintcache
-*.tsbuildinfo
-
-# Vite
-vite.config.js.timestamp-*
-vite.config.ts.timestamp-*
-
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.egg-info/
-*.egg
-.venv/
-*.bin
-*.rpt
-temp.inp
-
-# Model artifacts
-model/trained_models/
-*.pt
-*.pth
-*.onnx
-
-# Data files (large binaries)
-data/*.inp
-data/*.csv
-data/*.h5
-
-# Environment
-.env
-.env.*
-!.env.example
 
 # IDE
 .vscode/
 .idea/
-*.swp
-*.swo
 
 # OS
 .DS_Store
 Thumbs.db
 
+# UV
+.python-version
 
+# Frontend build
+frontend/dist/
+
+# Old files (already migrated)
+README.md
+TECHNICAL_WRITEUP.md
