@@ -4,6 +4,7 @@ import Plot from 'react-plotly.js'
 import { getSavings } from '../api/client'
 import MetricCard from '../components/MetricCard'
 import SectionHeader from '../components/SectionHeader'
+import { PiggyBank, Lightbulb } from 'lucide-react'
 
 export default function Savings() {
     const [waterCost, setWaterCost] = useState(2.5)
@@ -17,7 +18,7 @@ export default function Savings() {
 
     return (
         <div>
-            <h2 className="text-2xl font-bold mb-1 gradient-text">💰 City Water Savings Calculator</h2>
+            <h2 className="flex items-center gap-2 text-2xl font-bold mb-1 gradient-text"><PiggyBank className="w-6 h-6" /> City Water Savings Calculator</h2>
             <p className="text-sm text-[var(--color-text-dim)] mb-6">Quantify the economic impact of early leak detection.</p>
 
             {/* Controls */}
@@ -124,13 +125,16 @@ export default function Savings() {
 
                     {/* Key Insight */}
                     <div className="mt-8 p-4 rounded-xl border border-[rgba(79,172,254,0.15)] bg-[rgba(79,172,254,0.05)]">
-                        <p className="text-sm">
-                            💡 <strong>Key Finding:</strong> By detecting leaks just <strong>{speedup} days earlier</strong>,
-                            the city could save <strong>{data.total_saved_m3.toLocaleString()} m³</strong> of water
-                            (<strong>{((data.total_saved_m3 / data.total_lost_m3) * 100).toFixed(1)}%</strong> of total losses),
-                            worth <strong>${data.total_saved_cost.toLocaleString()}</strong> annually.
-                            Combined with reduced repair costs, total savings reach <strong>${data.total_combined_savings.toLocaleString()}</strong> —
-                            a <strong>{data.roi_pct}% ROI</strong> on the system investment.
+                        <p className="flex text-sm leading-relaxed">
+                            <Lightbulb className="w-5 h-5 mr-2 text-yellow-400 flex-shrink-0 mt-0.5" />
+                            <span>
+                                <strong>Key Finding:</strong> By detecting leaks just <strong>{speedup} days earlier</strong>,
+                                the city could save <strong>{data.total_saved_m3.toLocaleString()} m³</strong> of water
+                                (<strong>{((data.total_saved_m3 / data.total_lost_m3) * 100).toFixed(1)}%</strong> of total losses),
+                                worth <strong>${data.total_saved_cost.toLocaleString()}</strong> annually.
+                                Combined with reduced repair costs, total savings reach <strong>${data.total_combined_savings.toLocaleString()}</strong> —
+                                a <strong>{data.roi_pct}% ROI</strong> on the system investment.
+                            </span>
                         </p>
                     </div>
                 </>

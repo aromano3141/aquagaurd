@@ -1,11 +1,12 @@
 import { NavLink, Outlet } from 'react-router-dom'
 import { useAuth0, withAuthenticationRequired } from '@auth0/auth0-react'
+import { Map, Activity, LayoutDashboard, PiggyBank } from 'lucide-react'
 
 const navItems = [
-    { to: '/overview', icon: '🗺️', label: 'Network Overview' },
-    { to: '/simulation', icon: '🎯', label: 'Simulation' },
-    { to: '/sandbox', icon: '🏗️', label: 'City Sandbox' },
-    { to: '/savings', icon: '💰', label: 'Savings' },
+    { to: '/overview', icon: <Map className="w-5 h-5" />, label: 'Network Overview' },
+    { to: '/simulation', icon: <Activity className="w-5 h-5" />, label: 'Simulation' },
+    { to: '/sandbox', icon: <LayoutDashboard className="w-5 h-5" />, label: 'City Sandbox' },
+    { to: '/savings', icon: <PiggyBank className="w-5 h-5" />, label: 'Savings' },
 ]
 
 function Layout() {
@@ -35,7 +36,7 @@ function Layout() {
                                 }`
                             }
                         >
-                            <span className="text-lg">{icon}</span>
+                            {icon}
                             {label}
                         </NavLink>
                     ))}

@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { getNetwork, getGroundTruth, getPipelineResults } from '../api/client'
 import MetricCard from '../components/MetricCard'
 import NetworkMap from '../components/NetworkMap'
+import { Map } from 'lucide-react'
 
 export default function NetworkOverview() {
     const { data: network, isLoading: netLoading } = useQuery({ queryKey: ['network'], queryFn: getNetwork })
@@ -18,7 +19,7 @@ export default function NetworkOverview() {
 
     return (
         <div>
-            <h2 className="text-2xl font-bold mb-1 gradient-text">🗺️ L-TOWN Water Network</h2>
+            <h2 className="flex items-center gap-2 text-2xl font-bold mb-1 gradient-text"><Map className="w-6 h-6" /> L-TOWN Water Network</h2>
             <p className="text-sm text-[var(--color-text-dim)] mb-6">
                 Interactive visualization of the water distribution network with detected and ground-truth leaks overlaid.
             </p>

@@ -57,3 +57,15 @@ export const uploadNetwork = async (file) => {
     if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
     return res.json();
 };
+
+/* ── Dispatch ──────────────────────────────────────────────────────────── */
+export const dispatchAudio = async (nodeId) => {
+    const res = await fetch(`${API_BASE}/dispatch`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ node_id: nodeId }),
+    });
+    if (!res.ok) throw new Error(`Dispatch failed: ${res.status}`);
+    const blob = await res.blob();
+    return URL.createObjectURL(blob);
+};

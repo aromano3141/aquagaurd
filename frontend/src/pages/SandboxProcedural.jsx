@@ -1,8 +1,9 @@
 import { useState } from 'react'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import Plot from 'react-plotly.js'
-import { generateSandbox, simulateSandbox, loadInpNetwork, uploadNetwork } from '../api/client'
+import { generateSandbox, simulateSandbox, loadInpNetwork, uploadNetwork, dispatchAudio } from '../api/client'
 import MetricCard from '../components/MetricCard'
+import { Blocks, Globe, Settings2, Droplets, Upload, Play, Loader2, Volume2 } from 'lucide-react'
 
 const SAMPLE_NETWORKS = ['Net1.inp', 'Net2.inp', 'Net3.inp', 'Anytown.inp', 'Net6.inp']
 
@@ -23,6 +24,29 @@ export default function SandboxProcedural() {
 
     // Shared
     const [selectedLeaks, setSelectedLeaks] = useState([])
+    const [dispatching, setDispatching] = useState({})
+
+    const handleDispatch = async (nodeId) => {
+        try {
+            setDispatching(prev => ({ ...prev, [nodeId]: true }))
+            const audioUrl = await dispatchAudio(nodeId)
+            const audio = new Audio(audioUrl)
+
+            audio.onended = () => {
+                URL.revokeObjectURL(audioUrl)
+                setDispatching(prev => ({ ...prev, [nodeId]: false }))
+            }
+            audio.onerror = () => {
+                setDispatching(prev => ({ ...prev, [nodeId]: false }))
+            }
+
+            await audio.play()
+        } catch (err) {
+            console.error("Audio playback failed:", err)
+            alert("Dispatch failed: " + err.message)
+            setDispatching(prev => ({ ...prev, [nodeId]: false }))
+        }
+    }
 
     // ── Queries ──
     const proceduralQuery = useQuery({
@@ -227,23 +251,23 @@ export default function SandboxProcedural() {
                 {/* Mode Toggle */}
                 <div className="flex bg-[rgba(10,14,39,0.8)] border border-[var(--color-border)] rounded-lg p-1">
                     <button onClick={() => switchMode('procedural')}
-                        className={`flex-1 px-3 py-2 text-xs font-bold rounded-md transition-all ${mode === 'procedural'
+                        className={`flex-1 flex items-center justify-center gap-2 px-3 py-2 text-xs font-bold rounded-md transition-all ${mode === 'procedural'
                             ? 'bg-[var(--color-accent)] text-white shadow-md'
                             : 'text-[var(--color-text-dim)] hover:text-white hover:bg-[rgba(255,255,255,0.05)]'}`}>
-                        🏗️ Procedural
+                        <Blocks className="w-4 h-4" /> Procedural
                     </button>
                     <button onClick={() => switchMode('real')}
-                        className={`flex-1 px-3 py-2 text-xs font-bold rounded-md transition-all ${mode === 'real'
+                        className={`flex-1 flex items-center justify-center gap-2 px-3 py-2 text-xs font-bold rounded-md transition-all ${mode === 'real'
                             ? 'bg-[var(--color-accent)] text-white shadow-md'
                             : 'text-[var(--color-text-dim)] hover:text-white hover:bg-[rgba(255,255,255,0.05)]'}`}>
-                        🌍 Real Network
+                        <Globe className="w-4 h-4" /> Real Network
                     </button>
                 </div>
 
                 {/* Mode-specific controls */}
                 {mode === 'procedural' ? (
                     <div className="bg-[rgba(10,14,39,0.6)] border border-[var(--color-border)] rounded-xl p-4">
-                        <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--color-accent)] mb-3">⚙️ Network Parameters</h3>
+                        <h3 className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-[var(--color-accent)] mb-3"><Settings2 className="w-4 h-4" /> Network Parameters</h3>
                         <div className="space-y-3">
                             {sliders.map(([label, val, setter, min, max]) => (
                                 <div key={label}>
@@ -265,7 +289,7 @@ export default function SandboxProcedural() {
                     </div>
                 ) : (
                     <div className="bg-[rgba(10,14,39,0.6)] border border-[var(--color-border)] rounded-xl p-4">
-                        <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--color-accent)] mb-3">🌍 Real Network</h3>
+                        <h3 className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-[var(--color-accent)] mb-3"><Globe className="w-4 h-4" /> Real Network</h3>
                         <div className="space-y-3">
                             <div>
                                 <label className="text-xs text-[var(--color-text-dim)] block mb-1">Sample City</label>
@@ -288,8 +312,8 @@ export default function SandboxProcedural() {
                                 <div className="h-px bg-[rgba(255,255,255,0.1)] flex-grow"></div>
                             </div>
 
-                            <label className="flex items-center justify-center w-full h-12 border border-dashed border-[var(--color-border)] rounded-lg hover:border-[var(--color-accent)] hover:bg-[rgba(79,172,254,0.05)] cursor-pointer transition-colors text-xs text-[var(--color-text-dim)]">
-                                {uploading ? 'Uploading...' : '📁 Upload .inp File'}
+                            <label className="flex items-center justify-center gap-2 w-full h-12 border border-dashed border-[var(--color-border)] rounded-lg hover:border-[var(--color-accent)] hover:bg-[rgba(79,172,254,0.05)] cursor-pointer transition-colors text-xs text-[var(--color-text-dim)]">
+                                {uploading ? <><Loader2 className="w-4 h-4 animate-spin" /> Uploading...</> : <><Upload className="w-4 h-4" /> Upload .inp File</>}
                                 <input type="file" accept=".inp" className="hidden" onChange={handleFileUpload} disabled={uploading} />
                             </label>
                         </div>
@@ -298,7 +322,7 @@ export default function SandboxProcedural() {
 
                 {/* Leak Placement */}
                 <div className="bg-[rgba(10,14,39,0.6)] border border-[var(--color-border)] rounded-xl p-4">
-                    <h3 className="text-xs font-bold uppercase tracking-wider text-[#ff4757] mb-3">💧 Place Leaks</h3>
+                    <h3 className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-[#ff4757] mb-3"><Droplets className="w-4 h-4" /> Place Leaks</h3>
                     <div className="flex flex-wrap gap-1 max-h-36 overflow-y-auto pr-1">
                         {network?.pipes?.map(p => (
                             <button key={p.id} onClick={() => toggleLeak(p.id)}
@@ -325,11 +349,11 @@ export default function SandboxProcedural() {
                 {/* Run Button */}
                 <button onClick={() => simMutation.mutate()}
                     disabled={selectedLeaks.length === 0 || simMutation.isPending}
-                    className="w-full py-3.5 rounded-xl font-bold text-white transition-all text-sm
+                    className="w-full flex justify-center items-center gap-2 py-3.5 rounded-xl font-bold text-white transition-all text-sm
                        bg-gradient-to-r from-[var(--color-accent)] to-[var(--color-accent-end)]
                        hover:shadow-[0_4px_25px_rgba(79,172,254,0.4)]
                        disabled:opacity-30 disabled:cursor-not-allowed">
-                    {simMutation.isPending ? '⏳ Analyzing...' : '🚀 Run Detection'}
+                    {simMutation.isPending ? <><Loader2 className="w-5 h-5 animate-spin" /> Analyzing...</> : <><Play className="w-5 h-5 fill-current" /> Run Detection</>}
                 </button>
             </div>
 
@@ -395,8 +419,21 @@ export default function SandboxProcedural() {
                                             <span className="text-[#ff4757] font-mono">${p.work_order?.cost_per_hour}/hr</span>
                                         </div>
                                     </div>
-                                    <button className="mt-3 w-full py-2 bg-[rgba(255,71,87,0.1)] hover:bg-[rgba(255,71,87,0.2)] text-[#ff4757] font-semibold text-xs rounded-lg transition-colors border border-[rgba(255,71,87,0.3)] hover:border-[#ff4757]">
-                                        Dispatch Repair Team →
+                                    <button
+                                        onClick={() => handleDispatch(p.work_order?.dispatch_target || p.pipe)}
+                                        disabled={dispatching[p.work_order?.dispatch_target || p.pipe]}
+                                        className="mt-3 w-full flex items-center justify-center gap-2 py-2 bg-[rgba(255,71,87,0.1)] hover:bg-[rgba(255,71,87,0.2)] text-[#ff4757] font-semibold text-xs rounded-lg transition-colors border border-[rgba(255,71,87,0.3)] hover:border-[#ff4757] disabled:opacity-50 disabled:cursor-wait">
+                                        {dispatching[p.work_order?.dispatch_target || p.pipe] ? (
+                                            <>
+                                                <Volume2 className="w-4 h-4 animate-pulse" />
+                                                Generating & Playing Dispatch...
+                                            </>
+                                        ) : (
+                                            <>
+                                                <Volume2 className="w-4 h-4" />
+                                                Voice Dispatch Repair Team →
+                                            </>
+                                        )}
                                     </button>
                                 </div>
                             ))}

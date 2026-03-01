@@ -5,6 +5,7 @@ import { getSensorTimeseries, getPipelineResults, getNetwork, getGroundTruth } f
 import MetricCard from '../components/MetricCard'
 import SectionHeader from '../components/SectionHeader'
 import NetworkMap from '../components/NetworkMap'
+import { Activity } from 'lucide-react'
 
 const STEPS = [
     '1️⃣ Data Ingestion',
@@ -35,15 +36,15 @@ export default function Simulation() {
 
     return (
         <div>
-            <h2 className="text-2xl font-bold mb-1 gradient-text">🎯 Leak Detection Simulation</h2>
+            <h2 className="flex items-center gap-2 text-2xl font-bold mb-1 gradient-text"><Activity className="w-6 h-6" /> Leak Detection Simulation</h2>
             <p className="text-sm text-[var(--color-text-dim)] mb-6">Step through the detection pipeline visually.</p>
 
             <div className="flex gap-2 mb-8">
                 {STEPS.map((s, i) => (
                     <button key={i} onClick={() => setStep(i)}
                         className={`px-4 py-2 rounded-lg text-xs font-medium transition-all ${step === i
-                                ? 'bg-[rgba(79,172,254,0.15)] text-[var(--color-accent)] border border-[var(--color-accent)]'
-                                : 'text-[var(--color-text-dim)] border border-[var(--color-border)] hover:border-[var(--color-accent)]'
+                            ? 'bg-[rgba(79,172,254,0.15)] text-[var(--color-accent)] border border-[var(--color-accent)]'
+                            : 'text-[var(--color-text-dim)] border border-[var(--color-border)] hover:border-[var(--color-accent)]'
                             }`}>{s}</button>
                 ))}
             </div>
