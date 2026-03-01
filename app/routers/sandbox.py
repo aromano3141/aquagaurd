@@ -5,10 +5,28 @@ from pathlib import Path
 from fastapi import APIRouter, Query, UploadFile, File, HTTPException
 from pydantic import BaseModel
 import numpy as np
-
-from app.core.zone_inference import detect_zones
+import copy
+from functools import lru_cache
 
 import wntr
+
+@lru_cache(maxsize=10)
+def _get_base_network(file_path: str):
+    """Cache the parsed WNTR model to avoid slow .inp parsing."""
+    return wntr.network.WaterNetworkModel(file_path)
+
+def get_base_network(file_path: str):
+    """Return a fresh deepcopy of the cached network."""
+    return copy.deepcopy(_get_base_network(file_path))
+
+@lru_cache(maxsize=10)
+def get_baseline_pressures(file_path: str):
+    """Cache the baseline EPANET simulation results to avoid redundant compute."""
+    wn = get_base_network(file_path)
+    sim = wntr.sim.EpanetSimulator(wn)
+    results = sim.run_sim()
+    return results.node["pressure"].iloc[-1].to_dict()
+
 
 router = APIRouter(prefix="/api/sandbox", tags=["sandbox"])
 
@@ -81,7 +99,7 @@ async def load_inp_network(
             raise HTTPException(status_code=404, detail=f"Network file not found: {filename}")
 
     try:
-        wn = wntr.network.WaterNetworkModel(str(file_path))
+        wn = get_base_network(str(file_path))
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to parse .inp file: {e}")
 
@@ -139,11 +157,8 @@ async def simulate(req: SimulateRequest):
         pipe_map = {p["id"]: p for p in gen["pipes"]}
         sensor_list = gen["sensors"]
 
-        # Run Baseline Simulation
-        wn_base = wntr.network.WaterNetworkModel(str(file_path))
-        sim_base = wntr.sim.EpanetSimulator(wn_base)
-        results_base = sim_base.run_sim()
-        base_pressures = results_base.node["pressure"].iloc[-1]
+        # Run Baseline Simulation using caching
+        base_pressures = get_baseline_pressures(str(file_path))
 
         for lpid in req.leak_pipes:
             if lpid not in pipe_map:
@@ -152,7 +167,7 @@ async def simulate(req: SimulateRequest):
             true_coord = (node_map[pipe["start"]] + node_map[pipe["end"]]) / 2
 
             # Run Leak Simulation
-            wn_leak = wntr.network.WaterNetworkModel(str(file_path))
+            wn_leak = get_base_network(str(file_path))
             leak_node = wn_leak.get_node(pipe["start"])
             
             # Inject leak: area = pi * r^2. Let's say a 1.5 cm radius hole.
@@ -315,32 +330,3 @@ async def upload_network(file: UploadFile = File(...)):
         
     return {"filename": file.filename, "status": "success"}
 
-
-@router.post("/detect-zones")
-async def run_zone_detection(filename: str):
-    """Run the universal zone-level leak detection model on an uploaded network."""
-    file_path = Path("data/uploaded_networks") / filename
-    if not file_path.exists():
-        # Fallback to sample networks
-        file_path = Path("data/sample_networks") / filename
-        if not file_path.exists():
-            raise HTTPException(status_code=404, detail="Network file not found")
-            
-    try:
-        results = detect_zones(str(file_path), top_k_zones=10)
-        
-        # Add work order info to the top zone for the UI
-        top_zone = results["zones"][0] if results["zones"] else None
-        if top_zone:
-            gallons_lost = int(top_zone["probability"] * 1000 + 500)
-            cost_per_hour = round(gallons_lost * 0.03, 2)
-            results["work_order"] = {
-                "dispatch_target": top_zone["id"],
-                "gallons_lost_per_hour": gallons_lost,
-                "cost_per_hour": cost_per_hour,
-                "confidence_score": round(top_zone["probability"] * 100, 1)
-            }
-            
-        return results
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Inference failed: {str(e)}")

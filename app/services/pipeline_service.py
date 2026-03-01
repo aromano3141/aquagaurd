@@ -57,8 +57,8 @@ def run_pipeline() -> list[dict]:
         # Simulated Work Order logic for real data
         gallons_lost = int(severity * 1000 + 500)
         cost_per = round(gallons_lost * 0.03, 2)
-        dispatch_target = node_names[-1] if node_names else node
-        conf = float(weights_list[-1]) * 100 if weights_list else 0.0
+        dispatch_target = node_names[np.argmax(weights_list)] if weights_list else node
+        conf = float(np.max(weights_list)) * 100 if weights_list else 0.0
 
         results_list.append({
             "detected_node": node, "estimated_start_time": str(ts),

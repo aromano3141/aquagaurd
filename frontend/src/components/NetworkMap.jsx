@@ -1,117 +1,114 @@
 import { useMemo } from 'react'
 import Plot from 'react-plotly.js'
 
-const PLOT_LAYOUT = {
-    plot_bgcolor: 'rgba(0,0,0,0)',
-    paper_bgcolor: 'rgba(0,0,0,0)',
-    margin: { l: 0, r: 0, t: 0, b: 0 },
-    height: 600,
-    dragmode: 'pan',
-    xaxis: { showgrid: false, zeroline: false, showticklabels: false, scaleanchor: 'y' },
-    yaxis: { showgrid: false, zeroline: false, showticklabels: false },
-    legend: {
-        font: { color: '#c8d6e5', size: 11 },
-        bgcolor: 'rgba(10,14,39,0.8)',
-        bordercolor: 'rgba(79,172,254,0.2)',
-        borderwidth: 1,
-        x: 0.01, y: 0.99,
-    },
-    uirevision: 'true',
-}
-
 export default function NetworkMap({ network, predictions, groundTruth, showGt = true, showPred = true }) {
 
-    const { plotData, plotShapes } = useMemo(() => {
-        if (!network) return { plotData: [], plotShapes: [] }
-
+    const plotData = useMemo(() => {
+        if (!network) return []
         const data = []
-        const shapes = []
 
-        // Pipes using layout shapes (highly performant for static SVG lines)
-        for (const link of network.links) {
-            shapes.push({
-                type: 'line',
-                x0: link.start_x,
-                y0: link.start_y,
-                x1: link.end_x,
-                y1: link.end_y,
-                line: {
-                    color: 'rgba(0,0,150,0.4)',
-                    width: 1.0
-                }
-            })
+        // Create node lookup map for faster pipe rendering
+        const nodeMap = {}
+        for (const n of network.nodes) {
+            nodeMap[n.id] = n
         }
 
-        // Nodes using standard scatter (SVG)
+        // ── Pipes (batched into single trace) ──
+        const pipeX = [], pipeY = [], pipeZ = []
+        for (const link of network.links) {
+            pipeX.push(link.start_x, link.end_x, null)
+            pipeY.push(link.start_y, link.end_y, null)
+            pipeZ.push(0, 0, null)
+        }
         data.push({
-            x: network.nodes.map(n => n.x),
-            y: network.nodes.map(n => n.y),
-            mode: 'markers',
-            marker: { size: 3, color: 'rgba(0,0,150,0.4)' },
-            text: network.nodes.map(n => n.id),
-            hoverinfo: 'text', name: 'Network Nodes', showlegend: true, type: 'scatter',
+            x: pipeX, y: pipeY, z: pipeZ, mode: 'lines',
+            line: { width: 1.5, color: 'rgba(79,172,254,0.30)' },
+            hoverinfo: 'none', showlegend: false, type: 'scatter3d', connectgaps: false,
         })
 
-        // Ground truth leaks
+        // ── Junctions ──
+        data.push({
+            x: network.nodes.map(n => n.x), y: network.nodes.map(n => n.y),
+            z: network.nodes.map(() => 0), mode: 'markers',
+            marker: { size: 1.5, color: 'rgba(79,172,254,0.4)' },
+            text: network.nodes.map(n => n.id), hoverinfo: 'text',
+            name: 'Junctions', showlegend: false, type: 'scatter3d',
+        })
+
+        // ── Ground Truth Leaks ──
         if (showGt && groundTruth?.leaks?.length) {
             data.push({
                 x: groundTruth.leaks.map(l => l.x),
                 y: groundTruth.leaks.map(l => l.y),
-                mode: 'markers',
-                marker: { size: 12, color: '#ff4757', symbol: 'x', line: { width: 2, color: '#ff6b81' } },
-                text: groundTruth.leaks.map(l => `Ground Truth: ${l.pipe_id}`),
-                hoverinfo: 'text', name: 'Ground Truth Leaks', showlegend: true, type: 'scatter',
+                z: groundTruth.leaks.map(() => 0.3), mode: 'markers',
+                marker: { size: 8, color: '#ff4757', symbol: 'circle', line: { width: 2, color: '#ff6b81' } },
+                text: groundTruth.leaks.map(l => `Ground Truth: ${l.pipe_id}`), hoverinfo: 'text',
+                name: 'Ground Truth Leaks', type: 'scatter3d',
             })
         }
 
-        // Predicted leaks
+        // ── Simulation Results / Predictions ──
         if (showPred && predictions?.length) {
+            const hx = [], hy = [], hz = [], hColor = [], hSize = [], hText = []
+            const pillarX = [], pillarY = [], pillarZ = []
+
             const validPreds = predictions.filter(p => p.gps_coordinates)
 
-            // 1. Heatmap layer (draw first so it renders underneath)
             for (const p of validPreds) {
                 if (p.heatmap) {
                     p.heatmap.forEach(h => {
-                        data.push({
-                            x: [h.x], y: [h.y], mode: 'markers',
-                            marker: {
-                                size: (h.weight * 120) + 30,
-                                color: [h.weight],
-                                colorscale: 'Turbo',
-                                cmin: 0, cmax: 1,
-                                line: { width: 0 },
-                                opacity: 0.8
-                            },
-                            hoverinfo: 'text', text: `IDW Probability: ${(h.weight * 100).toFixed(1)}%`,
-                            name: 'Probability Heatmap', showlegend: false, type: 'scatter'
-                        })
+                        const zHeight = h.weight * 6
+                        hx.push(h.x); hy.push(h.y); hz.push(zHeight)
+                        hColor.push(h.weight)
+                        hSize.push((h.weight * 25) + 8)
+                        hText.push(`IDW Probability: ${(h.weight * 100).toFixed(1)}%`)
+                        pillarX.push(h.x, h.x, null)
+                        pillarY.push(h.y, h.y, null)
+                        pillarZ.push(0, zHeight, null)
                     })
                 }
             }
 
-            const maxSev = Math.max(...validPreds.map(p => p.estimated_cusum_severity), 1)
+            if (hx.length > 0) {
+                data.push({
+                    x: pillarX, y: pillarY, z: pillarZ, mode: 'lines',
+                    line: { width: 3, color: 'rgba(79,172,254,0.15)' },
+                    showlegend: false, hoverinfo: 'none', type: 'scatter3d', connectgaps: false,
+                })
+                data.push({
+                    x: hx, y: hy, z: hz, mode: 'markers',
+                    marker: {
+                        size: hSize, color: hColor,
+                        colorscale: 'Turbo', cmin: 0, cmax: 1,
+                        showscale: true,
+                        colorbar: {
+                            title: { text: 'Probability', font: { color: '#c8d6e5', size: 12 } },
+                            tickfont: { color: '#c8d6e5', size: 10 },
+                            len: 0.5, thickness: 12, x: 1.02,
+                            bgcolor: 'rgba(0,0,0,0.3)',
+                            bordercolor: 'rgba(79,172,254,0.2)', borderwidth: 1,
+                        },
+                        line: { width: 0 }, opacity: 0.9,
+                    },
+                    hoverinfo: 'text', text: hText,
+                    name: 'Leak Probability', showlegend: false, type: 'scatter3d',
+                })
+            }
+
+            // Prediction stars
             data.push({
-                x: validPreds.map(p => p.gps_coordinates[0]),
-                y: validPreds.map(p => p.gps_coordinates[1]),
-                mode: 'markers',
-                marker: {
-                    size: validPreds.map(p => Math.max(10, (p.estimated_cusum_severity / maxSev) * 28)),
-                    color: validPreds.map(p => p.estimated_cusum_severity),
-                    colorscale: 'Turbo',
-                    cmin: 0, cmax: maxSev,
-                    showscale: true,
-                    colorbar: { title: 'Severity', tickfont: { color: '#c8d6e5' }, titlefont: { color: '#c8d6e5' } },
-                    line: { width: 1.5, color: 'rgba(255,255,255,0.3)' },
-                    opacity: 0.9,
-                },
+                x: validPreds.map(p => p.gps_coordinates[0]), y: validPreds.map(p => p.gps_coordinates[1]),
+                z: validPreds.map(() => 0.5), mode: 'markers',
+                marker: { size: 10, color: '#2ed573', symbol: 'diamond', line: { width: 1, color: '#7bed9f' } },
                 text: validPreds.map(p =>
-                    `Node: ${p.detected_node}<br>Time: ${p.estimated_start_time}<br>Severity: ${p.estimated_cusum_severity.toFixed(2)}`
+                    `Prediction Node: ${p.detected_node}<br>Time: ${p.estimated_start_time}<br>Severity: ${p.estimated_cusum_severity.toFixed(2)}`
                 ),
-                hoverinfo: 'text', name: 'Predicted Leaks', showlegend: true, type: 'scatter',
+                hoverinfo: 'text', name: 'AI Predictions', type: 'scatter3d',
             })
+
         }
 
-        return { plotData: data, plotShapes: shapes }
+        return data
     }, [network, predictions, groundTruth, showGt, showPred])
 
     if (!network) return null
@@ -119,10 +116,27 @@ export default function NetworkMap({ network, predictions, groundTruth, showGt =
     return (
         <Plot
             data={plotData}
-            layout={{ ...PLOT_LAYOUT, shapes: plotShapes }}
+            layout={{
+                plot_bgcolor: 'rgba(0,0,0,0)', paper_bgcolor: 'rgba(0,0,0,0)',
+                font: { color: '#c0c8d4', size: 11 },
+                scene: {
+                    bgcolor: '#000000',
+                    xaxis: { showgrid: true, gridcolor: 'rgba(79,172,254,0.06)', zeroline: false, showticklabels: false, title: '' },
+                    yaxis: { showgrid: true, gridcolor: 'rgba(79,172,254,0.06)', zeroline: false, showticklabels: false, title: '' },
+                    zaxis: { showgrid: false, zeroline: false, visible: false, range: [0, 7] },
+                    camera: { eye: { x: 1.4, y: -1.4, z: 0.9 }, center: { x: 0, y: 0, z: -0.15 } },
+                    aspectmode: 'manual', aspectratio: { x: 1.2, y: 1, z: 0.5 },
+                },
+                height: 700, margin: { l: 0, r: 0, t: 0, b: 0 },
+                legend: {
+                    bgcolor: 'rgba(10,14,39,0.85)', bordercolor: 'rgba(79,172,254,0.15)',
+                    borderwidth: 1, x: 0.01, y: 0.99,
+                    font: { size: 10, color: '#c8d6e5' },
+                },
+            }}
             config={{ scrollZoom: true, responsive: true, displayModeBar: false }}
-            useResizeHandler
-            style={{ width: '100%', height: '100%' }}
+            useResizeHandler style={{ width: '100%', height: '100%' }}
         />
     )
 }
+
