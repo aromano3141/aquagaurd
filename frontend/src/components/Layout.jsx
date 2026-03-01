@@ -5,8 +5,8 @@ import { Map, Activity, LayoutDashboard, PiggyBank } from 'lucide-react'
 const navItems = [
     { to: '/overview', icon: <Map className="w-5 h-5" />, label: 'Network Overview' },
     { to: '/simulation', icon: <Activity className="w-5 h-5" />, label: 'Simulation' },
-    { to: '/sandbox', icon: <LayoutDashboard className="w-5 h-5" />, label: 'City Sandbox' },
     { to: '/savings', icon: <PiggyBank className="w-5 h-5" />, label: 'Savings' },
+    { to: '/sandbox', icon: <LayoutDashboard className="w-5 h-5" />, label: 'City Sandbox' },
 ]
 
 function Layout() {

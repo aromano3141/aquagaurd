@@ -3,7 +3,7 @@ import { useQuery, useMutation } from '@tanstack/react-query'
 import Plot from 'react-plotly.js'
 import { generateSandbox, simulateSandbox, loadInpNetwork, uploadNetwork, dispatchAudio } from '../api/client'
 import MetricCard from '../components/MetricCard'
-import { Blocks, Globe, Settings2, Droplets, Upload, Play, Loader2, Volume2 } from 'lucide-react'
+import { Blocks, Globe, Settings2, Droplets, Upload, Play, Loader2, Volume2, DollarSign, TrendingUp, Lightbulb } from 'lucide-react'
 
 const SAMPLE_NETWORKS = ['Net1.inp', 'Net2.inp', 'Net3.inp', 'Anytown.inp', 'Net6.inp']
 
@@ -25,6 +25,11 @@ export default function SandboxProcedural() {
     // Shared
     const [selectedLeaks, setSelectedLeaks] = useState([])
     const [dispatching, setDispatching] = useState({})
+
+    // Savings estimator params
+    const [savWaterCost, setSavWaterCost] = useState(3.50)
+    const [savRepairCost, setSavRepairCost] = useState(8500)
+    const [savSpeedup, setSavSpeedup] = useState(7)
 
     const handleDispatch = async (nodeId) => {
         try {
@@ -437,6 +442,88 @@ export default function SandboxProcedural() {
                                     </button>
                                 </div>
                             ))}
+                        </div>
+
+                        {/* ── Savings Estimator ── */}
+                        <div className="mt-8 bg-[rgba(10,14,39,0.6)] border border-[rgba(46,213,115,0.25)] rounded-2xl p-6">
+                            <h3 className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-[#2ed573] mb-4">
+                                <DollarSign className="w-4 h-4" /> Savings Estimator
+                            </h3>
+
+                            {/* Tweakable Parameters */}
+                            <div className="grid grid-cols-3 gap-4 mb-5">
+                                <div>
+                                    <label className="text-xs text-[var(--color-text-dim)] block mb-1">Water Cost ($/m³)</label>
+                                    <input type="number" value={savWaterCost} step={0.25} min={0.5} max={20}
+                                        onChange={e => setSavWaterCost(Number(e.target.value))}
+                                        className="w-full bg-[rgba(8,10,24,0.9)] border border-[var(--color-border)] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-[#2ed573] transition-colors" />
+                                </div>
+                                <div>
+                                    <label className="text-xs text-[var(--color-text-dim)] block mb-1">Avg Repair Cost ($/leak)</label>
+                                    <input type="number" value={savRepairCost} step={500} min={1000} max={100000}
+                                        onChange={e => setSavRepairCost(Number(e.target.value))}
+                                        className="w-full bg-[rgba(8,10,24,0.9)] border border-[var(--color-border)] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-[#2ed573] transition-colors" />
+                                </div>
+                                <div>
+                                    <label className="text-xs text-[var(--color-text-dim)] block mb-1">Early Detection: {savSpeedup} days</label>
+                                    <input type="range" min={1} max={30} value={savSpeedup}
+                                        onChange={e => setSavSpeedup(Number(e.target.value))}
+                                        className="w-full accent-[#2ed573] mt-2" />
+                                </div>
+                            </div>
+
+                            {/* Computed Savings */}
+                            {(() => {
+                                const preds = simMutation.data.predictions
+                                const numLeaks = preds.length
+                                const avgGalPerHr = preds.reduce((s, p) => s + (p.work_order?.gallons_lost_per_hour || 50), 0) / Math.max(numLeaks, 1)
+                                const totalGalSaved = avgGalPerHr * 24 * savSpeedup * numLeaks
+                                const totalM3Saved = (totalGalSaved * 0.00378541).toFixed(0)
+                                const waterCostSaved = (totalM3Saved * savWaterCost).toFixed(0)
+                                const repairSavings = (numLeaks * savRepairCost * 0.15).toFixed(0)
+                                const totalSavings = (Number(waterCostSaved) + Number(repairSavings)).toLocaleString()
+
+                                return (
+                                    <>
+                                        <div className="grid grid-cols-4 gap-3 mb-4">
+                                            <MetricCard value={numLeaks} label="Leaks Detected" sublabel="In this simulation" />
+                                            <MetricCard value={`${Number(totalM3Saved).toLocaleString()} m³`} label="Water Saved" sublabel={`${savSpeedup}-day early detection`} gradient="green" />
+                                            <MetricCard value={`$${Number(waterCostSaved).toLocaleString()}`} label="Water Cost Saved" sublabel={`At $${savWaterCost}/m³`} gradient="green" />
+                                            <MetricCard value={`$${totalSavings}`} label="Total Estimated Savings" sublabel="Water + reduced repair" gradient="orange" />
+                                        </div>
+
+                                        {/* Per-leak breakdown */}
+                                        <div className="space-y-2">
+                                            {preds.map((p, i) => {
+                                                const galHr = p.work_order?.gallons_lost_per_hour || 50
+                                                const galSaved = galHr * 24 * savSpeedup
+                                                const m3Saved = (galSaved * 0.00378541).toFixed(1)
+                                                const costSaved = (m3Saved * savWaterCost).toFixed(0)
+                                                return (
+                                                    <div key={i} className="flex items-center justify-between bg-[rgba(8,10,24,0.5)] rounded-lg px-4 py-2.5 border border-[rgba(46,213,115,0.1)]">
+                                                        <div className="flex items-center gap-3">
+                                                            <TrendingUp className="w-4 h-4 text-[#2ed573]" />
+                                                            <span className="text-sm font-medium">{p.work_order?.dispatch_target || `Pipe ${p.pipe}`}</span>
+                                                        </div>
+                                                        <div className="flex items-center gap-6 text-xs text-[var(--color-text-dim)]">
+                                                            <span>{galHr} gal/hr loss</span>
+                                                            <span className="text-[#2ed573] font-mono font-semibold">{Number(m3Saved).toLocaleString()} m³ saved</span>
+                                                            <span className="text-[#ffa502] font-mono font-semibold">${Number(costSaved).toLocaleString()}</span>
+                                                        </div>
+                                                    </div>
+                                                )
+                                            })}
+                                        </div>
+
+                                        <div className="mt-4 p-3 rounded-lg border border-[rgba(79,172,254,0.15)] bg-[rgba(79,172,254,0.05)]">
+                                            <p className="flex text-xs text-[var(--color-text-dim)] leading-relaxed">
+                                                <Lightbulb className="w-4 h-4 mr-2 text-yellow-400 flex-shrink-0 mt-0.5" />
+                                                <span>Detecting these {numLeaks} leak(s) <strong>{savSpeedup} days earlier</strong> could save <strong>{Number(totalM3Saved).toLocaleString()} m³</strong> of water worth <strong>${Number(waterCostSaved).toLocaleString()}</strong>, plus <strong>${Number(repairSavings).toLocaleString()}</strong> in reduced emergency repair costs.</span>
+                                            </p>
+                                        </div>
+                                    </>
+                                )
+                            })()}
                         </div>
                     </div>
                 )}

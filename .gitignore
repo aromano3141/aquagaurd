@@ -1,5 +1,7 @@
 # Generated / Dependencies
 node_modules/
+.env
+.env.*
 __pycache__/
 *.pyc
 .venv/
@@ -24,9 +26,16 @@ frontend/dist/
 # Old files (already migrated)
 README.md
 TECHNICAL_WRITEUP.md
+error_log.txt
+temp.rpt
 
 # Large Data & Binaries
 *.pt
 *.bin
 temp.*
 large_files.txt
+
+
+#images
+l_town_check.png
+

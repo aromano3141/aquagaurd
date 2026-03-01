@@ -14,19 +14,13 @@ export const getPipelineResults = () => fetchApi('/pipeline/run');
 export const getPipelineMetrics = () => fetchApi('/pipeline/metrics');
 
 /* ── Sensors ───────────────────────────────────────────────────────────── */
-export const getSensors = () => fetchApi('/sensors');
 export const getSensorTimeseries = (sensors, startDate, endDate) => {
     const params = new URLSearchParams({ sensors: sensors.join(',') });
     if (startDate) params.set('start_date', startDate);
     if (endDate) params.set('end_date', endDate);
     return fetchApi(`/sensors/timeseries?${params}`);
 };
-export const getSensorStats = (sensors, startDate, endDate) => {
-    const params = new URLSearchParams({ sensors: sensors.join(',') });
-    if (startDate) params.set('start_date', startDate);
-    if (endDate) params.set('end_date', endDate);
-    return fetchApi(`/sensors/stats?${params}`);
-};
+
 
 /* ── Network ───────────────────────────────────────────────────────────── */
 export const getNetwork = () => fetchApi('/network');
