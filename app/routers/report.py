@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+import asyncio
 import os
 import httpx
 
@@ -62,11 +63,24 @@ Write the report now:"""
         },
     }
 
-    async with httpx.AsyncClient(timeout=30) as client:
-        response = await client.post(url, json=payload)
+    # Retry up to 3 times on rate-limit (429)
+    last_error = None
+    for attempt in range(3):
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.post(url, json=payload)
 
-    if response.status_code != 200:
-        raise HTTPException(status_code=response.status_code, detail=response.text)
+        if response.status_code == 200:
+            break
+        elif response.status_code == 429:
+            last_error = "Rate limited by Gemini API. Retrying..."
+            await asyncio.sleep(2 * (attempt + 1))  # 2s, 4s, 6s backoff
+        else:
+            raise HTTPException(
+                status_code=response.status_code,
+                detail=f"Gemini API error: {response.text[:200]}"
+            )
+    else:
+        raise HTTPException(status_code=429, detail="Gemini rate limit exceeded. Please wait a moment and try again.")
 
     data = response.json()
     try:
