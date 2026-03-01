@@ -11,12 +11,13 @@ import wntr
 from scipy.fft import fft
 from scipy.spatial.distance import euclidean
 from scipy.stats import entropy
-from sklearn.linear_model import LinearRegression
+from sklearn.ensemble import RandomForestRegressor
 from sklearn.preprocessing import StandardScaler
 from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
 from torch_geometric.nn import GATv2Conv
 
+from tqdm import tqdm
 from .models import AnomalyLeakDetector
 
 warnings.filterwarnings('ignore', category=pd.errors.PerformanceWarning)
@@ -64,6 +65,11 @@ class LeakDetector:
         self.gnn_model = None
         self.gnn_scaler = None
         self.edge_index = None
+        self.edge_attr = None
+        
+        # Device detection
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        print(f"LeakDetector initialized using device: {self.device}")
 
     def _load_edge_index(self):
         # Load edge_index.csv and make it undirected
@@ -79,36 +85,48 @@ class LeakDetector:
         edges = np.vstack([node1, node2])
         edges_reversed = np.vstack([node2, node1])
         edge_index = np.hstack([edges, edges_reversed])
-        return torch.tensor(edge_index, dtype=torch.long)
+        
+        # Extract edge features: Length, Diameter, Roughness
+        # Assuming the CSV has these columns. If not, we fall back to None.
+        if 'Length' in edges_df.columns and 'Diameter' in edges_df.columns and 'Roughness' in edges_df.columns:
+            feats = edges_df[['Length', 'Diameter', 'Roughness']].values
+            # Scale features
+            scaler = StandardScaler()
+            feats_scaled = scaler.fit_transform(feats)
+            
+            # Duplicate for reversed edges
+            edge_attr = np.vstack([feats_scaled, feats_scaled])
+            return torch.tensor(edge_index, dtype=torch.long), torch.tensor(edge_attr, dtype=torch.float32)
+        else:
+            return torch.tensor(edge_index, dtype=torch.long), None
 
     def _extract_gnn_features(self, df):
-        # Rolling window feature extraction (mean, max, min, std)
+        # Extract raw sequences for the LSTM layer
         # df shape: (T, N)
         window_size = 120
         stride = 10
         
         # We need a tensor of shape (T, N)
         tensor_data = torch.tensor(df.values, dtype=torch.float32)
-        # Unfold to get windows: (T//stride, N, window_size)
+        # Unfold to get windows: (num_windows, N, window_size)
         windows = tensor_data.unfold(0, window_size, stride).float()
         
-        mean_v = windows.mean(dim=2)
-        max_v = windows.max(dim=2).values
-        min_v = windows.min(dim=2).values
-        std_v = windows.std(dim=2)
-        
-        # Stack features: (num_windows, N, 4)
-        features = torch.stack([mean_v, max_v, min_v, std_v], dim=2)
-        return features
+        # Transpose to (num_windows, N, window_size) - already in this shape
+        # Return raw window features instead of min/max aggregation
+        # LSTM needs sequence length, so we keep window_size
+        return windows
         
     def train_gnn(self, cor_time_frame):
         print("Training GNN AnomalyLeakDetector on calibration period...")
         df_cal = self.pressures.loc[cor_time_frame[0]:cor_time_frame[1]]
         
-        self.edge_index = self._load_edge_index()
-        if self.edge_index is None:
+        edge_data = self._load_edge_index()
+        if edge_data is None:
             print("Warning: GNN edge_index not found. Skipping GNN.")
             return
+            
+        self.edge_index, self.edge_attr = edge_data
+        edge_dim = self.edge_attr.shape[1] if self.edge_attr is not None else None
 
         features = self._extract_gnn_features(df_cal) # (W, N, 4)
         num_windows, num_nodes, num_feats = features.shape
@@ -119,28 +137,68 @@ class LeakDetector:
         features_scaled = torch.tensor(self.gnn_scaler.fit_transform(features_flat.numpy()), dtype=torch.float32)
         features_scaled = einops.rearrange(features_scaled, '(w n) f -> w n f', n=num_nodes)
         
-        # Create dataset
-        data_list = [
-            Data(x=features_scaled[i], edge_index=self.edge_index, y=features_scaled[i])
-            for i in range(num_windows)
+        # Train/Val Split (80/20)
+        split_idx = int(0.8 * num_windows)
+        
+        train_data_list = [
+            Data(x=features_scaled[i], edge_index=self.edge_index, edge_attr=self.edge_attr, y=features_scaled[i])
+            for i in range(split_idx)
+        ]
+        val_data_list = [
+            Data(x=features_scaled[i], edge_index=self.edge_index, edge_attr=self.edge_attr, y=features_scaled[i])
+            for i in range(split_idx, num_windows)
         ]
         
-        loader = DataLoader(data_list, batch_size=256, shuffle=True)
+        train_loader = DataLoader(train_data_list, batch_size=256, shuffle=True)
+        val_loader = DataLoader(val_data_list, batch_size=256, shuffle=False)
         
-        # Initialize model
-        self.gnn_model = AnomalyLeakDetector(node_in=4, hid_dim=16, num_layers=4, edge_in=None, gnn_layer=GATv2Conv)
+        # Initialize model with LSTM
+        self.gnn_model = AnomalyLeakDetector(
+            node_in=num_feats, 
+            hid_dim=32, 
+            num_layers=4, 
+            edge_in=edge_dim, 
+            gnn_layer=GATv2Conv,
+            lstm_layers=1,
+            window_size=num_feats
+        ).to(self.device)
         optimizer = torch.optim.AdamW(self.gnn_model.parameters(), lr=0.01, weight_decay=1e-4)
         
-        self.gnn_model.train()
-        epochs = 15 # Short training runs well for MAE setup
+        epochs = 30
+        best_val_loss = float('inf')
+        patience = 5
+        patience_counter = 0
+        
         for epoch in range(epochs):
-            for data in loader:
+            self.gnn_model.train()
+            train_loss = 0
+            for data in train_loader:
+                data = data.to(self.device)
                 optimizer.zero_grad()
                 out = self.gnn_model(data)
-                loss = F.l1_loss(out, data.y)
+                loss = F.mse_loss(out, data.y)
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.gnn_model.parameters(), 1.0)
                 optimizer.step()
+                train_loss += loss.item()
+                
+            self.gnn_model.eval()
+            val_loss = 0
+            with torch.no_grad():
+                for data in val_loader:
+                    data = data.to(self.device)
+                    out = self.gnn_model(data)
+                    val_loss += F.mse_loss(out, data.y).item()
+                    
+            val_loss /= len(val_loader)
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
+                patience_counter = 0
+            else:
+                patience_counter += 1
+                if patience_counter >= patience:
+                    print(f"Early stopping at epoch {epoch}. Best Val Loss: {best_val_loss:.4f}")
+                    break
         print("GNN Training completed.")
 
     def leak_analysis(self, cor_time_frame):
@@ -157,21 +215,28 @@ class LeakDetector:
         V = self.flows['PUMP_1'].values
 
         res = np.zeros((N, T))
-        K0 = np.zeros((N, N))
-        K1 = np.zeros((N, N))
-        Kd = np.zeros((N, N))
-        Kr = np.zeros((N, N)) # New learned coefficient for the Ratio term
+        
+        # Store models since we cannot extract linear coefficients
+        # models[(i, j)] = trained RandomForestRegressor
+        models = {}
 
         print("Fitting regression models with Flow-to-Pressure ratio feature...")
 
-        for i, node in enumerate(self.nodes):
+        for i, node in tqdm(enumerate(self.nodes), total=N, desc="Fitting RF Models"):
             # Target variable: Specific node's pressure
             y_tr = self.pressures[node].loc[cor_time_frame[0]:cor_time_frame[1]].values.reshape(-1, 1)
 
-            # Iterating through all reference nodes
-            for j, node_cor in enumerate(self.nodes):
+            # Iterating through a subset of reference nodes to save time with RFs.
+            # E.g., just taking the previous, next, and one other node in the list.
+            ref_indices = [(i-1)%N, (i+1)%N, (i+N//2)%N]
+            
+            # Using a sub-progress bar for reference sensors if needed, 
+            # but wrapping the main outer loop is better for visibility.
+            for j in ref_indices:
                 if i == j:
                     continue # Ignore self
+                
+                node_cor = self.nodes[j]
 
                 # Feature 1: Reference Node Pressure
                 p_ref = self.pressures[node_cor].loc[cor_time_frame[0]:cor_time_frame[1]].values.reshape(-1, 1)
@@ -186,53 +251,50 @@ class LeakDetector:
 
                 X_tr = np.concatenate([p_ref, v_tr, ratio_tr], axis=1)
 
-                model = LinearRegression()
-                model.fit(X_tr, y_tr)
+                model = RandomForestRegressor(n_estimators=100, max_depth=5, random_state=42, n_jobs=-1)
+                model.fit(X_tr, y_tr.ravel())
 
-                K0[i, j] = model.intercept_[0]
-                K1[i, j] = model.coef_[0][0]
-                Kd[i, j] = model.coef_[0][1]
-                Kr[i, j] = model.coef_[0][2]
+                # Save the trained model
+                models[(i, j)] = model
 
-        print("Calculating Error residuals across the time-series...")
         # Calculate error across all T
-        np.fill_diagonal(K0, 0)
-        np.fill_diagonal(K1, 1)
-        np.fill_diagonal(Kd, 0)
-        np.fill_diagonal(Kr, 0)
+        print("Calculating residuals with batched inference...")
+        
+        # Precompute features for all t
+        # P is (N, T), ratio is (N, T)
+        ratio = V / (P + 1e-6)
+        
+        P_pred_full = np.zeros((N, N, T))
+        # Default prediction for any node i using reference j is just P[i, t] (zero error)
+        # This covers self-prediction and any j that isn't in our sampled subset.
+        for i in range(N):
+            P_pred_full[i, :, :] = P[i, :]
 
-        # Batch prediction over all times t
-        # e(i, j, t) = p_i(t) - (K0 + K1*p_j(t) + Kd*v(t) + Kr*(v(t)/p_j(t)))
+        # Batch prediction over all models
+        for (i, j), m in tqdm(models.items(), desc="RF Analysis Batch Predict"):
+            # Features for all t for this specific (i, j) model
+            # ref_pressure: P[j, :] (T,), source_flow: V (T,), ratio: ratio[j, :] (T,)
+            X_all = np.stack([P[j, :], V, ratio[j, :]], axis=1) # (T, 3)
+            P_pred_full[i, j, :] = m.predict(X_all) # (T,)
+
+        # Vectorized Error calculation
+        # E[i, j, t] = P[i, t] - P_pred_full[i, j, t]
+        # P[:, np.newaxis, :] is (N, 1, T)
+        E = P[:, np.newaxis, :] - P_pred_full
+        E[E < 0] = 0
+        E = np.clip(E, 0, 1)
+
+        # Sum of errors for a given Target Node 'i' across all references 'j'
+        node_error_sums = np.sum(E, axis=1) # (N, T)
+        
+        # Find the node that is deviating the most overall for each timestamp
+        i_max_per_t = np.argmax(node_error_sums, axis=0) # (T,)
+
+        res = np.zeros((N, T))
         for t in range(T):
-            P_t = P[:, t] # Vector of length N
-            V_t = V[t]
-
-            # Vectorized computation for speed
-            # e_t is N x N matrix (Target Node i = row, Reference Node j = col)
-            ratio_t = V_t / (P_t + 1e-6)
-            
-            # Predict P_t using all combinations
-            P_pred = K0 + K1 * P_t + Kd * V_t + Kr * ratio_t
-            
-            # Error (True - Predicted)
-            # e_t shape -> (N, N)
-            # P_t[:, np.newaxis] broadcasts the true targets column-wise
-            e_t = P_t[:, np.newaxis] - P_pred
-
-            # We only care about positive error (pressure drops more than predicted)
-            e_t[e_t < 0] = 0
-            
-            # Thresholding relative size
-            e_t = np.clip(e_t, 0, 1)
-
-            # Sum of errors for a given Target Node 'i' across all references 'j'
-            node_error_sums = np.sum(e_t, axis=1)
-            
-            # Find the node that is deviating the most overall
-            i_max = np.argmax(node_error_sums)
-
-            # Record the L2 Norm (Frobenius for the slice) of the error for the worst node at time t
-            res[i_max, t] = np.linalg.norm(e_t[i_max, :])
+            im = i_max_per_t[t]
+            # Record the norm of the error vector for the worst node at time t
+            res[im, t] = np.linalg.norm(E[im, :, t])
 
         MRE = pd.DataFrame(res.T, index=self.pressures.index, columns=self.nodes)
         return MRE
@@ -277,6 +339,7 @@ class LeakDetector:
         """
         Calculates the triangulated leak position using Inverse Distance Weighting
         enhanced with GNN reconstruction error and entropy features on the top 3 nodes.
+        Uses Min-Max scaling to ensure fair weighting between metrics.
         """
         cusum_at_t = df_cs.loc[timestamp]
         top_sensors = cusum_at_t.nlargest(3)
@@ -287,7 +350,7 @@ class LeakDetector:
             
         gnn_node_errors = None
         if self.gnn_model is not None and self.gnn_scaler is not None:
-            window_start = timestamp - pd.Timedelta('10 hours')
+            window_start = timestamp - pd.Timedelta('20 hours')
             df_window = pressures_df.loc[window_start:timestamp]
             if len(df_window) >= 120:
                 features = self._extract_gnn_features(df_window.tail(120))
@@ -297,15 +360,21 @@ class LeakDetector:
                     f_scaled = torch.tensor(self.gnn_scaler.transform(f_flat.numpy()), dtype=torch.float32)
                     f_scaled = einops.rearrange(f_scaled, '(w n) f -> w n f', n=num_nodes)
                     
-                    data = Data(x=f_scaled[0], edge_index=self.edge_index, y=f_scaled[0])
+                    data = Data(x=f_scaled[0], edge_index=self.edge_index, edge_attr=self.edge_attr, y=f_scaled[0])
+                    data = data.to(self.device)
                     self.gnn_model.eval()
                     with torch.no_grad():
                         recon = self.gnn_model(data)
-                        gnn_node_errors = torch.mean(torch.abs(data.y - recon), dim=1).numpy()
+                        # Mean over the sequence window (dim=1 in reconstructed [N, W])
+                        gnn_node_errors = torch.mean(torch.abs(data.y - recon), dim=1).cpu().numpy()
 
         coords = []
-        weights = []
         node_names = []
+        
+        # Collect raw components
+        raw_cusums = []
+        raw_gnns = []
+        raw_ents = []
         
         window_start = timestamp - self.est_length
 
@@ -324,16 +393,32 @@ class LeakDetector:
                     if np.isnan(f_ent): f_ent = 0
                     if np.isnan(p_ent): p_ent = 0
                     
-                    node_weight = (error_val + w_gnn * node_gnn_error + w_ent * f_ent) * (p_ent + 1e-3)
+                    combined_ent = f_ent * (p_ent + 1e-3)
                 else:
-                    node_weight = error_val + w_gnn * node_gnn_error
+                    combined_ent = 0
                 
                 coords.append(node_obj.coordinates)
-                weights.append(node_weight)
                 node_names.append(node)
+                
+                raw_cusums.append(error_val)
+                raw_gnns.append(node_gnn_error)
+                raw_ents.append(combined_ent)
                 
         if not coords:
             return None, None, None, None
+            
+        def minmax_scale(arr):
+            arr = np.array(arr)
+            ptp = np.ptp(arr)
+            if ptp == 0:
+                return np.ones_like(arr) / len(arr) if len(arr) > 0 else arr
+            return (arr - np.min(arr)) / ptp
+            
+        scaled_cusums = minmax_scale(raw_cusums)
+        scaled_gnns = minmax_scale(raw_gnns)
+        scaled_ents = minmax_scale(raw_ents)
+        
+        weights = scaled_cusums + (w_gnn * scaled_gnns) + (w_ent * scaled_ents)
             
         weights = np.array(weights)
         if np.sum(weights) == 0:

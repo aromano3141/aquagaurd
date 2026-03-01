@@ -35,7 +35,7 @@ export default function DetectionResults() {
                             marker: {
                                 size: results.map(r => Math.max(8, r.estimated_cusum_severity * 2)),
                                 color: results.map(r => r.estimated_cusum_severity),
-                                colorscale: [[0, '#2ed573'], [0.5, '#ffa502'], [1, '#ff4757']],
+                                colorscale: 'Turbo',
                             },
                             text: results.map(r => r.detected_node),
                             hoverinfo: 'text+y', type: 'scatter',

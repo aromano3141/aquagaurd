@@ -1,24 +1,50 @@
 import { useState } from 'react'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import Plot from 'react-plotly.js'
-import { generateSandbox, simulateSandbox } from '../api/client'
+import { generateSandbox, simulateSandbox, loadInpNetwork, uploadNetwork } from '../api/client'
 import MetricCard from '../components/MetricCard'
-import SectionHeader from '../components/SectionHeader'
+
+const SAMPLE_NETWORKS = ['Net1.inp', 'Net2.inp', 'Net3.inp', 'Anytown.inp', 'Net6.inp']
 
 export default function SandboxProcedural() {
+    // ── Mode: 'procedural' or 'real' ──
+    const [mode, setMode] = useState('procedural')
+
+    // Procedural params
     const [rows, setRows] = useState(6)
     const [cols, setCols] = useState(8)
     const [nSensors, setNSensors] = useState(5)
     const [density, setDensity] = useState(0.3)
+
+    // Real network params
+    const [selectedFile, setSelectedFile] = useState('Net3.inp')
+    const [realSensors, setRealSensors] = useState(8)
+    const [uploading, setUploading] = useState(false)
+
+    // Shared
     const [selectedLeaks, setSelectedLeaks] = useState([])
 
-    const { data: network } = useQuery({
+    // ── Queries ──
+    const proceduralQuery = useQuery({
         queryKey: ['sandbox', rows, cols, nSensors, density],
         queryFn: () => generateSandbox(rows, cols, nSensors, density),
+        enabled: mode === 'procedural',
     })
 
+    const realQuery = useQuery({
+        queryKey: ['sandbox-inp', selectedFile, realSensors],
+        queryFn: () => loadInpNetwork(selectedFile, realSensors),
+        enabled: mode === 'real',
+    })
+
+    const network = mode === 'procedural' ? proceduralQuery.data : realQuery.data
+
     const simMutation = useMutation({
-        mutationFn: () => simulateSandbox({ leak_pipes: selectedLeaks, rows, cols, sensors: nSensors, density }),
+        mutationFn: () => simulateSandbox({
+            leak_pipes: selectedLeaks,
+            rows, cols, sensors: mode === 'procedural' ? nSensors : realSensors, density,
+            ...(mode === 'real' ? { filename: selectedFile } : {}),
+        }),
     })
 
     const nodeMap = {}
@@ -29,38 +55,77 @@ export default function SandboxProcedural() {
         simMutation.reset()
     }
 
+    const switchMode = (newMode) => {
+        setMode(newMode)
+        setSelectedLeaks([])
+        simMutation.reset()
+    }
+
+    const handleFileUpload = async (e) => {
+        const file = e.target.files?.[0]
+        if (!file) return
+        try {
+            setUploading(true)
+            const res = await uploadNetwork(file)
+            setSelectedFile(res.filename)
+            setMode('real')
+            setSelectedLeaks([])
+            simMutation.reset()
+        } catch (err) {
+            alert('Failed to upload: ' + err.message)
+        } finally {
+            setUploading(false)
+        }
+    }
+
     const buildFigData = () => {
         if (!network) return []
         const data = []
 
-        // Pipes
+        // ── Pipes (batched into single trace) ──
+        const pipeX = [], pipeY = [], pipeZ = []
         for (const pipe of network.pipes) {
             const n1 = nodeMap[pipe.start], n2 = nodeMap[pipe.end]
             if (!n1 || !n2) continue
             const isLeak = selectedLeaks.includes(pipe.id)
-            data.push({
-                x: [n1.x, n2.x], y: [n1.y, n2.y], mode: 'lines',
-                line: { width: isLeak ? 3 : 1.2, color: isLeak ? '#ff4757' : 'rgba(79,172,254,0.3)' },
-                hoverinfo: 'text', text: pipe.id, showlegend: false, type: 'scatter',
-            })
+            if (isLeak) {
+                data.push({
+                    x: [n1.x, n2.x], y: [n1.y, n2.y], z: [0, 0], mode: 'lines',
+                    line: { width: 6, color: '#ff4757' },
+                    hoverinfo: 'text', text: pipe.id, showlegend: false, type: 'scatter3d',
+                })
+            } else {
+                pipeX.push(n1.x, n2.x, null)
+                pipeY.push(n1.y, n2.y, null)
+                pipeZ.push(0, 0, null)
+            }
         }
-
-        // Nodes
         data.push({
-            x: network.nodes.map(n => n.x), y: network.nodes.map(n => n.y), mode: 'markers',
-            marker: { size: 6, color: 'rgba(79,172,254,0.5)' },
-            text: network.nodes.map(n => n.id), hoverinfo: 'text', name: 'Junctions', type: 'scatter',
+            x: pipeX, y: pipeY, z: pipeZ, mode: 'lines',
+            line: { width: 2.5, color: 'rgba(79,172,254,0.35)' },
+            hoverinfo: 'none', showlegend: false, type: 'scatter3d', connectgaps: false,
         })
 
-        // Sensors
+        // ── Junctions ──
+        data.push({
+            x: network.nodes.map(n => n.x), y: network.nodes.map(n => n.y),
+            z: network.nodes.map(() => 0), mode: 'markers',
+            marker: { size: 2.5, color: 'rgba(79,172,254,0.4)' },
+            text: network.nodes.map(n => n.id), hoverinfo: 'text',
+            name: 'Junctions', type: 'scatter3d',
+        })
+
+        // ── Sensors ──
         const sCoords = network.sensors.map(s => nodeMap[s]).filter(Boolean)
         data.push({
-            x: sCoords.map(n => n.x), y: sCoords.map(n => n.y), mode: 'markers',
-            marker: { size: 14, color: '#00f2fe', symbol: 'diamond', line: { width: 2, color: '#4facfe' } },
-            text: network.sensors.map(s => `Sensor: ${s}`), hoverinfo: 'text', name: 'Sensors', type: 'scatter',
+            x: sCoords.map(n => n.x), y: sCoords.map(n => n.y),
+            z: sCoords.map(() => 0.15), mode: 'markers',
+            marker: { size: 5, color: '#00f2fe', symbol: 'diamond', line: { width: 1, color: '#4facfe' } },
+            text: network.sensors.map(s => `Sensor: ${s}`), hoverinfo: 'text',
+            name: 'Sensors', type: 'scatter3d',
         })
 
-        // Leak markers
+        // ── Placed Leak Markers ──
         if (selectedLeaks.length > 0) {
             const leakCoords = selectedLeaks.map(pid => {
                 const p = network.pipes.find(pp => pp.id === pid)
@@ -69,168 +134,276 @@ export default function SandboxProcedural() {
                 return n1 && n2 ? { id: pid, x: (n1.x + n2.x) / 2, y: (n1.y + n2.y) / 2 } : null
             }).filter(Boolean)
             data.push({
-                x: leakCoords.map(l => l.x), y: leakCoords.map(l => l.y), mode: 'markers',
-                marker: { size: 16, color: '#ff4757', symbol: 'x', line: { width: 2, color: '#ff6b81' } },
-                text: leakCoords.map(l => `Leak: ${l.id}`), hoverinfo: 'text', name: 'Placed Leaks', type: 'scatter',
+                x: leakCoords.map(l => l.x), y: leakCoords.map(l => l.y),
+                z: leakCoords.map(() => 0.3), mode: 'markers',
+                marker: { size: 7, color: '#ff4757', symbol: 'x', line: { width: 1, color: '#ff6b81' } },
+                text: leakCoords.map(l => `Leak: ${l.id}`), hoverinfo: 'text',
+                name: 'Placed Leaks', type: 'scatter3d',
             })
         }
 
-        // Simulation predictions
+        // ── Simulation Results ──
         if (simMutation.data?.predictions) {
             const preds = simMutation.data.predictions
+            const hx = [], hy = [], hz = [], hColor = [], hSize = [], hText = []
+            const pillarX = [], pillarY = [], pillarZ = []
 
-            // 1. Heatmap layer (draw first so it renders underneath)
             for (const p of preds) {
                 if (p.heatmap) {
                     p.heatmap.forEach(h => {
-                        data.push({
-                            x: [h.x], y: [h.y], mode: 'markers',
-                            marker: {
-                                size: (h.weight * 120) + 30, // Dynamic radius based on probability
-                                color: `rgba(255, 71, 87, ${h.weight * 0.4})`, // Opacity scales with probability
-                                line: { width: 0 }
-                            },
-                            hoverinfo: 'text', text: `IDW Probability: ${(h.weight * 100).toFixed(1)}%`,
-                            name: 'Probability Heatmap', showlegend: false, type: 'scatter'
-                        })
+                        const zHeight = h.weight * 6
+                        hx.push(h.x); hy.push(h.y); hz.push(zHeight)
+                        hColor.push(h.weight)
+                        hSize.push((h.weight * 25) + 8)
+                        hText.push(`IDW Probability: ${(h.weight * 100).toFixed(1)}%`)
+                        pillarX.push(h.x, h.x, null)
+                        pillarY.push(h.y, h.y, null)
+                        pillarZ.push(0, zHeight, null)
                     })
                 }
             }
 
-            // 2. Prediction markers and error lines
-            data.push({
-                x: preds.map(p => p.pred_x), y: preds.map(p => p.pred_y), mode: 'markers',
-                marker: { size: 18, color: '#2ed573', symbol: 'star', line: { width: 2, color: '#7bed9f' } },
-                text: preds.map(p => `Prediction: ${p.pipe}<br>Error: ${p.error}m`),
-                hoverinfo: 'text', name: 'Predicted Locations', type: 'scatter',
-            })
-            for (const p of preds) {
+            if (hx.length > 0) {
                 data.push({
-                    x: [p.true_x, p.pred_x], y: [p.true_y, p.pred_y], mode: 'lines',
-                    line: { width: 1.5, color: '#ffa502', dash: 'dash' },
-                    showlegend: false, hoverinfo: 'none', type: 'scatter',
+                    x: pillarX, y: pillarY, z: pillarZ, mode: 'lines',
+                    line: { width: 3, color: 'rgba(79,172,254,0.15)' },
+                    showlegend: false, hoverinfo: 'none', type: 'scatter3d', connectgaps: false,
+                })
+                data.push({
+                    x: hx, y: hy, z: hz, mode: 'markers',
+                    marker: {
+                        size: hSize, color: hColor,
+                        colorscale: 'Turbo', cmin: 0, cmax: 1,
+                        showscale: true,
+                        colorbar: {
+                            title: { text: 'Probability', font: { color: '#c8d6e5', size: 12 } },
+                            tickfont: { color: '#c8d6e5', size: 10 },
+                            len: 0.5, thickness: 12, x: 1.02,
+                            bgcolor: 'rgba(0,0,0,0.3)',
+                            bordercolor: 'rgba(79,172,254,0.2)', borderwidth: 1,
+                        },
+                        line: { width: 0 }, opacity: 0.9,
+                    },
+                    hoverinfo: 'text', text: hText,
+                    name: 'Leak Probability', showlegend: false, type: 'scatter3d',
                 })
             }
+
+            // Prediction stars
+            data.push({
+                x: preds.map(p => p.pred_x), y: preds.map(p => p.pred_y),
+                z: preds.map(() => 0.5), mode: 'markers',
+                marker: { size: 10, color: '#2ed573', symbol: 'diamond', line: { width: 1, color: '#7bed9f' } },
+                text: preds.map(p => `Prediction: ${p.pipe}\nError: ${p.error}m`),
+                hoverinfo: 'text', name: 'AI Predictions', type: 'scatter3d',
+            })
+
+            const errX = [], errY = [], errZ = []
+            for (const p of preds) {
+                errX.push(p.true_x, p.pred_x, null)
+                errY.push(p.true_y, p.pred_y, null)
+                errZ.push(0.2, 0.5, null)
+            }
+            data.push({
+                x: errX, y: errY, z: errZ, mode: 'lines',
+                line: { width: 3, color: '#ffa502', dash: 'dash' },
+                showlegend: false, hoverinfo: 'none', type: 'scatter3d', connectgaps: false,
+            })
         }
 
         return data
     }
 
+    const sliders = [
+        ['Grid Rows', rows, setRows, 3, 15],
+        ['Grid Columns', cols, setCols, 3, 15],
+        ['Sensors', nSensors, setNSensors, 2, 50],
+    ]
+
     return (
-        <div className="animate-in fade-in duration-500">
-            <h2 className="text-2xl font-bold mb-1 gradient-text">🏗️ Procedural Generator & Leak Sandbox</h2>
-            <p className="text-sm text-[var(--color-text-dim)] mb-6">Generate a grid network, playfully place leaks, and see how the IDW model reacts.</p>
-
-            {/* Controls */}
-            <SectionHeader>Network Parameters</SectionHeader>
-            <div className="grid grid-cols-4 gap-4 mb-6">
-                {[['Grid Rows', rows, setRows, 3, 15], ['Grid Columns', cols, setCols, 3, 15],
-                ['Sensors', nSensors, setNSensors, 2, 50]].map(([label, val, setter, min, max]) => (
-                    <div key={label}>
-                        <label className="text-xs text-[var(--color-text-dim)] block mb-1">{label}: {val}</label>
-                        <input type="range" min={min} max={max} value={val} onChange={e => setter(Number(e.target.value))}
-                            className="w-full accent-[var(--color-accent)]" />
-                    </div>
-                ))}
-                <div>
-                    <label className="text-xs text-[var(--color-text-dim)] block mb-1">Pipe Density: {density}</label>
-                    <input type="range" min={0} max={1} step={0.1} value={density} onChange={e => setDensity(Number(e.target.value))}
-                        className="w-full accent-[var(--color-accent)]" />
+        <div className="flex gap-6">
+            {/* ── Left Control Panel ── */}
+            <div className="w-72 flex-shrink-0 space-y-4">
+                {/* Mode Toggle */}
+                <div className="flex bg-[rgba(10,14,39,0.8)] border border-[var(--color-border)] rounded-lg p-1">
+                    <button onClick={() => switchMode('procedural')}
+                        className={`flex-1 px-3 py-2 text-xs font-bold rounded-md transition-all ${mode === 'procedural'
+                            ? 'bg-[var(--color-accent)] text-white shadow-md'
+                            : 'text-[var(--color-text-dim)] hover:text-white hover:bg-[rgba(255,255,255,0.05)]'}`}>
+                        🏗️ Procedural
+                    </button>
+                    <button onClick={() => switchMode('real')}
+                        className={`flex-1 px-3 py-2 text-xs font-bold rounded-md transition-all ${mode === 'real'
+                            ? 'bg-[var(--color-accent)] text-white shadow-md'
+                            : 'text-[var(--color-text-dim)] hover:text-white hover:bg-[rgba(255,255,255,0.05)]'}`}>
+                        🌍 Real Network
+                    </button>
                 </div>
-            </div>
 
-            {/* Leak Placement */}
-            <SectionHeader>Place Leaks</SectionHeader>
-            <div className="flex flex-wrap gap-1.5 mb-4 max-h-24 overflow-y-auto">
-                {network?.pipes?.map(p => (
-                    <button key={p.id} onClick={() => toggleLeak(p.id)}
-                        className={`px-2 py-0.5 rounded text-xs transition-all ${selectedLeaks.includes(p.id)
-                            ? 'bg-[rgba(255,71,87,0.2)] text-[#ff4757] border border-[#ff4757]'
-                            : 'text-[var(--color-text-dimmer)] border border-[var(--color-border)] hover:border-[var(--color-accent)]'
-                            }`}>{p.id}</button>
-                ))}
-            </div>
-
-            {/* Metrics + Map */}
-            <div className="grid grid-cols-3 gap-4 mb-4">
-                <MetricCard value={network?.nodes?.length ?? 0} label="Junctions" sublabel={`${rows}×${cols} grid`} />
-                <MetricCard value={network?.pipes?.length ?? 0} label="Pipes" sublabel={`Density: ${(density * 100).toFixed(0)}%`} />
-                <MetricCard value={selectedLeaks.length} label="Active Leaks" sublabel="Placed by user" />
-            </div>
-
-            <div className="rounded-2xl border border-[var(--color-border)] overflow-hidden mb-6"
-                style={{ background: 'rgba(8,10,24,0.6)' }}>
-                <Plot
-                    data={buildFigData()}
-                    layout={{
-                        plot_bgcolor: 'rgba(0,0,0,0)', paper_bgcolor: 'rgba(0,0,0,0)',
-                        font: { color: '#c0c8d4', size: 11 },
-                        xaxis: { showgrid: false, zeroline: false, visible: false, scaleanchor: 'y' },
-                        yaxis: { showgrid: false, zeroline: false, visible: false },
-                        height: 550, margin: { l: 10, r: 10, t: 10, b: 10 },
-                        legend: { bgcolor: 'rgba(10,14,39,0.8)', bordercolor: 'rgba(79,172,254,0.1)', borderwidth: 1, x: 0.01, y: 0.99 },
-                        dragmode: 'pan',
-                    }}
-                    config={{ scrollZoom: true, responsive: true }}
-                    useResizeHandler style={{ width: '100%' }}
-                />
-            </div>
-
-            {/* Run Simulation */}
-            <button onClick={() => simMutation.mutate()}
-                disabled={selectedLeaks.length === 0 || simMutation.isPending}
-                className="w-full py-3 rounded-xl font-semibold text-white transition-all
-                   bg-gradient-to-r from-[var(--color-accent)] to-[var(--color-accent-end)]
-                   hover:shadow-[0_4px_20px_rgba(79,172,254,0.3)]
-                   disabled:opacity-40 disabled:cursor-not-allowed">
-                {simMutation.isPending ? '⏳ Running...' : '🚀 Run Detection Simulation'}
-            </button>
-
-            {/* Results */}
-            {simMutation.data && (
-                <div className="mt-6">
-                    <SectionHeader>Simulation Accuracy</SectionHeader>
-                    <div className="grid grid-cols-3 gap-4 mb-6">
-                        <MetricCard value={`${simMutation.data.mean_error}m`} label="Mean Error"
-                            gradient={simMutation.data.mean_error < 50 ? 'green' : simMutation.data.mean_error < 100 ? 'orange' : 'red'} />
-                        <MetricCard value={`${simMutation.data.max_error}m`} label="Max Error" />
-                        <MetricCard value={`${simMutation.data.accuracy_pct}%`} label="Accuracy" sublabel="Within 50m threshold" />
-                    </div>
-
-                    <SectionHeader>Maintenance Dispatch Orders</SectionHeader>
-                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                        {simMutation.data.predictions.map((p, i) => (
-                            <div key={i} className="bg-[rgba(10,14,39,0.7)] border border-[rgba(255,71,87,0.3)] rounded-xl p-4 flex flex-col relative overflow-hidden">
-                                <div className="absolute top-0 right-0 w-24 h-24 bg-[#ff4757] opacity-[0.05] rounded-bl-full" />
-                                <div className="text-[#ff4757] font-bold mb-1 text-[10px] uppercase tracking-wider flex items-center gap-1">
-                                    <span className="w-1.5 h-1.5 rounded-full bg-[#ff4757] animate-pulse"></span>
-                                    High Priority Leak
+                {/* Mode-specific controls */}
+                {mode === 'procedural' ? (
+                    <div className="bg-[rgba(10,14,39,0.6)] border border-[var(--color-border)] rounded-xl p-4">
+                        <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--color-accent)] mb-3">⚙️ Network Parameters</h3>
+                        <div className="space-y-3">
+                            {sliders.map(([label, val, setter, min, max]) => (
+                                <div key={label}>
+                                    <div className="flex justify-between text-xs text-[var(--color-text-dim)] mb-1">
+                                        <span>{label}</span><span className="font-mono text-white">{val}</span>
+                                    </div>
+                                    <input type="range" min={min} max={max} value={val} onChange={e => setter(Number(e.target.value))}
+                                        className="w-full accent-[var(--color-accent)] h-1" />
                                 </div>
-                                <h4 className="text-xl font-bold mb-3 tracking-wide">Target: {p.work_order?.dispatch_target || `Pipe ${p.pipe}`}</h4>
-
-                                <div className="space-y-2 text-sm text-[var(--color-text-dim)] flex-grow">
-                                    <div className="flex justify-between border-b border-[rgba(255,255,255,0.05)] pb-1">
-                                        <span>AI Confidence:</span>
-                                        <span className="text-white font-mono">{p.work_order?.confidence_score}%</span>
-                                    </div>
-                                    <div className="flex justify-between border-b border-[rgba(255,255,255,0.05)] pb-1">
-                                        <span>Est. Water Loss:</span>
-                                        <span className="text-[#ffa502] font-mono">{p.work_order?.gallons_lost_per_hour} gal/hr</span>
-                                    </div>
-                                    <div className="flex justify-between">
-                                        <span>Economic Impact:</span>
-                                        <span className="text-[#ff4757] font-mono">${p.work_order?.cost_per_hour}/hr</span>
-                                    </div>
+                            ))}
+                            <div>
+                                <div className="flex justify-between text-xs text-[var(--color-text-dim)] mb-1">
+                                    <span>Pipe Density</span><span className="font-mono text-white">{(density * 100).toFixed(0)}%</span>
                                 </div>
-
-                                <button className="mt-4 w-full py-2.5 bg-[rgba(255,71,87,0.1)] hover:bg-[rgba(255,71,87,0.2)] text-[#ff4757] font-semibold text-sm rounded-lg transition-colors border border-[rgba(255,71,87,0.3)] hover:border-[#ff4757]">
-                                    Dispatch Repair Team
-                                </button>
+                                <input type="range" min={0} max={1} step={0.1} value={density} onChange={e => setDensity(Number(e.target.value))}
+                                    className="w-full accent-[var(--color-accent)] h-1" />
                             </div>
+                        </div>
+                    </div>
+                ) : (
+                    <div className="bg-[rgba(10,14,39,0.6)] border border-[var(--color-border)] rounded-xl p-4">
+                        <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--color-accent)] mb-3">🌍 Real Network</h3>
+                        <div className="space-y-3">
+                            <div>
+                                <label className="text-xs text-[var(--color-text-dim)] block mb-1">Sample City</label>
+                                <select value={selectedFile} onChange={e => { setSelectedFile(e.target.value); setSelectedLeaks([]); simMutation.reset() }}
+                                    className="w-full bg-[rgba(8,10,24,0.8)] border border-[var(--color-border)] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-[var(--color-accent)] transition-colors">
+                                    {SAMPLE_NETWORKS.map(net => <option key={net} value={net}>{net}</option>)}
+                                </select>
+                            </div>
+                            <div>
+                                <div className="flex justify-between text-xs text-[var(--color-text-dim)] mb-1">
+                                    <span>Sensors</span><span className="font-mono text-white">{realSensors}</span>
+                                </div>
+                                <input type="range" min={2} max={30} value={realSensors} onChange={e => setRealSensors(Number(e.target.value))}
+                                    className="w-full accent-[var(--color-accent)] h-1" />
+                            </div>
+
+                            <div className="flex items-center gap-2 py-1">
+                                <div className="h-px bg-[rgba(255,255,255,0.1)] flex-grow"></div>
+                                <span className="text-[var(--color-text-dimmer)] text-[10px] uppercase font-bold tracking-wider">or</span>
+                                <div className="h-px bg-[rgba(255,255,255,0.1)] flex-grow"></div>
+                            </div>
+
+                            <label className="flex items-center justify-center w-full h-12 border border-dashed border-[var(--color-border)] rounded-lg hover:border-[var(--color-accent)] hover:bg-[rgba(79,172,254,0.05)] cursor-pointer transition-colors text-xs text-[var(--color-text-dim)]">
+                                {uploading ? 'Uploading...' : '📁 Upload .inp File'}
+                                <input type="file" accept=".inp" className="hidden" onChange={handleFileUpload} disabled={uploading} />
+                            </label>
+                        </div>
+                    </div>
+                )}
+
+                {/* Leak Placement */}
+                <div className="bg-[rgba(10,14,39,0.6)] border border-[var(--color-border)] rounded-xl p-4">
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-[#ff4757] mb-3">💧 Place Leaks</h3>
+                    <div className="flex flex-wrap gap-1 max-h-36 overflow-y-auto pr-1">
+                        {network?.pipes?.map(p => (
+                            <button key={p.id} onClick={() => toggleLeak(p.id)}
+                                className={`px-1.5 py-0.5 rounded text-[10px] transition-all ${selectedLeaks.includes(p.id)
+                                    ? 'bg-[rgba(255,71,87,0.25)] text-[#ff4757] border border-[#ff4757] font-bold'
+                                    : 'text-[var(--color-text-dimmer)] border border-[var(--color-border)] hover:border-[var(--color-accent)]'
+                                    }`}>{p.id}</button>
                         ))}
                     </div>
+                    {realQuery.isLoading && mode === 'real' && (
+                        <div className="text-xs text-[var(--color-text-dim)] mt-2 animate-pulse">Loading network...</div>
+                    )}
                 </div>
-            )}
+
+                {/* Quick Metrics */}
+                <div className="space-y-2">
+                    <MetricCard value={network?.nodes?.length ?? 0} label="Junctions"
+                        sublabel={mode === 'procedural' ? `${rows}×${cols} grid` : selectedFile} />
+                    <MetricCard value={network?.pipes?.length ?? 0} label="Pipes" />
+                    <MetricCard value={selectedLeaks.length} label="Active Leaks" sublabel="Placed by user"
+                        gradient={selectedLeaks.length > 0 ? 'red' : undefined} />
+                </div>
+
+                {/* Run Button */}
+                <button onClick={() => simMutation.mutate()}
+                    disabled={selectedLeaks.length === 0 || simMutation.isPending}
+                    className="w-full py-3.5 rounded-xl font-bold text-white transition-all text-sm
+                       bg-gradient-to-r from-[var(--color-accent)] to-[var(--color-accent-end)]
+                       hover:shadow-[0_4px_25px_rgba(79,172,254,0.4)]
+                       disabled:opacity-30 disabled:cursor-not-allowed">
+                    {simMutation.isPending ? '⏳ Analyzing...' : '🚀 Run Detection'}
+                </button>
+            </div>
+
+            {/* ── Right: 3D Map + Results ── */}
+            <div className="flex-1 min-w-0 space-y-5">
+                <div className="rounded-2xl border border-[var(--color-border)] overflow-hidden"
+                    style={{ background: '#000000' }}>
+                    <Plot
+                        data={buildFigData()}
+                        layout={{
+                            plot_bgcolor: 'rgba(0,0,0,0)', paper_bgcolor: 'rgba(0,0,0,0)',
+                            font: { color: '#c0c8d4', size: 11 },
+                            scene: {
+                                bgcolor: '#000000',
+                                xaxis: { showgrid: true, gridcolor: 'rgba(79,172,254,0.06)', zeroline: false, showticklabels: false, title: '' },
+                                yaxis: { showgrid: true, gridcolor: 'rgba(79,172,254,0.06)', zeroline: false, showticklabels: false, title: '' },
+                                zaxis: { showgrid: false, zeroline: false, visible: false, range: [0, 7] },
+                                camera: { eye: { x: 1.4, y: -1.4, z: 0.9 }, center: { x: 0, y: 0, z: -0.15 } },
+                                aspectmode: 'manual', aspectratio: { x: 1.2, y: 1, z: 0.5 },
+                            },
+                            height: 700, margin: { l: 0, r: 0, t: 0, b: 0 },
+                            legend: {
+                                bgcolor: 'rgba(10,14,39,0.85)', bordercolor: 'rgba(79,172,254,0.15)',
+                                borderwidth: 1, x: 0.01, y: 0.99,
+                                font: { size: 10, color: '#c8d6e5' },
+                            },
+                        }}
+                        config={{ scrollZoom: true, responsive: true, displayModeBar: false }}
+                        useResizeHandler style={{ width: '100%' }}
+                    />
+                </div>
+
+                {/* Results */}
+                {simMutation.data && (
+                    <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+                        <div className="grid grid-cols-3 gap-4 mb-5">
+                            <MetricCard value={`${simMutation.data.mean_error}m`} label="Mean Error"
+                                gradient={simMutation.data.mean_error < 50 ? 'green' : simMutation.data.mean_error < 100 ? 'orange' : 'red'} />
+                            <MetricCard value={`${simMutation.data.max_error}m`} label="Max Error" />
+                            <MetricCard value={`${simMutation.data.accuracy_pct}%`} label="Accuracy" sublabel="Within 50m threshold" />
+                        </div>
+
+                        <h3 className="text-xs font-bold uppercase tracking-wider text-[#ff4757] mb-3 flex items-center gap-2">
+                            <span className="w-2 h-2 rounded-full bg-[#ff4757] animate-pulse"></span>
+                            Maintenance Dispatch Orders
+                        </h3>
+                        <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+                            {simMutation.data.predictions.map((p, i) => (
+                                <div key={i} className="bg-[rgba(10,14,39,0.7)] border border-[rgba(255,71,87,0.3)] rounded-xl p-4 flex flex-col relative overflow-hidden">
+                                    <div className="absolute top-0 right-0 w-20 h-20 bg-[#ff4757] opacity-[0.04] rounded-bl-full" />
+                                    <h4 className="text-lg font-bold mb-2 tracking-wide">Target: {p.work_order?.dispatch_target || `Pipe ${p.pipe}`}</h4>
+                                    <div className="space-y-1.5 text-sm text-[var(--color-text-dim)] flex-grow">
+                                        <div className="flex justify-between border-b border-[rgba(255,255,255,0.05)] pb-1">
+                                            <span>AI Confidence:</span>
+                                            <span className="text-white font-mono">{p.work_order?.confidence_score}%</span>
+                                        </div>
+                                        <div className="flex justify-between border-b border-[rgba(255,255,255,0.05)] pb-1">
+                                            <span>Est. Water Loss:</span>
+                                            <span className="text-[#ffa502] font-mono">{p.work_order?.gallons_lost_per_hour} gal/hr</span>
+                                        </div>
+                                        <div className="flex justify-between">
+                                            <span>Economic Impact:</span>
+                                            <span className="text-[#ff4757] font-mono">${p.work_order?.cost_per_hour}/hr</span>
+                                        </div>
+                                    </div>
+                                    <button className="mt-3 w-full py-2 bg-[rgba(255,71,87,0.1)] hover:bg-[rgba(255,71,87,0.2)] text-[#ff4757] font-semibold text-xs rounded-lg transition-colors border border-[rgba(255,71,87,0.3)] hover:border-[#ff4757]">
+                                        Dispatch Repair Team →
+                                    </button>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+            </div>
         </div>
     )
 }

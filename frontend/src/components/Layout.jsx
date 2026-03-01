@@ -51,11 +51,7 @@ export default function Layout() {
                         </div>
                     </div>
 
-                    <button className="w-full py-2 text-xs text-[var(--color-accent)] border border-[rgba(79,172,254,0.3)] hover:bg-[rgba(79,172,254,0.1)] rounded-lg transition-colors font-medium">
-                        + Import City (.inp)
-                    </button>
-
-                    <p className="text-[10px] text-center text-[var(--color-text-dimmest)] pt-2">Universal Topology Engine v1.0</p>
+                    <p className="text-[10px] text-center text-[var(--color-text-dimmest)] pt-2">AquaGuard Engine v1.0</p>
                 </div>
             </aside>
 

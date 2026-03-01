@@ -36,8 +36,8 @@ export default function NetworkMap({ network, predictions, groundTruth, showGt =
                 x1: link.end_x,
                 y1: link.end_y,
                 line: {
-                    color: 'rgba(79,172,254,0.25)',
-                    width: 1.2
+                    color: 'rgba(0,0,150,0.4)',
+                    width: 1.0
                 }
             })
         }
@@ -47,7 +47,7 @@ export default function NetworkMap({ network, predictions, groundTruth, showGt =
             x: network.nodes.map(n => n.x),
             y: network.nodes.map(n => n.y),
             mode: 'markers',
-            marker: { size: 3, color: 'rgba(79,172,254,0.5)' },
+            marker: { size: 3, color: 'rgba(0,0,150,0.4)' },
             text: network.nodes.map(n => n.id),
             hoverinfo: 'text', name: 'Network Nodes', showlegend: true, type: 'scatter',
         })
@@ -76,8 +76,11 @@ export default function NetworkMap({ network, predictions, groundTruth, showGt =
                             x: [h.x], y: [h.y], mode: 'markers',
                             marker: {
                                 size: (h.weight * 120) + 30,
-                                color: `rgba(255, 71, 87, ${h.weight * 0.4})`,
-                                line: { width: 0 }
+                                color: [h.weight],
+                                colorscale: 'Turbo',
+                                cmin: 0, cmax: 1,
+                                line: { width: 0 },
+                                opacity: 0.8
                             },
                             hoverinfo: 'text', text: `IDW Probability: ${(h.weight * 100).toFixed(1)}%`,
                             name: 'Probability Heatmap', showlegend: false, type: 'scatter'
@@ -94,7 +97,8 @@ export default function NetworkMap({ network, predictions, groundTruth, showGt =
                 marker: {
                     size: validPreds.map(p => Math.max(10, (p.estimated_cusum_severity / maxSev) * 28)),
                     color: validPreds.map(p => p.estimated_cusum_severity),
-                    colorscale: [[0, '#2ed573'], [0.5, '#ffa502'], [1, '#ff4757']],
+                    colorscale: 'Turbo',
+                    cmin: 0, cmax: maxSev,
                     showscale: true,
                     colorbar: { title: 'Severity', tickfont: { color: '#c8d6e5' }, titlefont: { color: '#c8d6e5' } },
                     line: { width: 1.5, color: 'rgba(255,255,255,0.3)' },

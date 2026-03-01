@@ -182,6 +182,7 @@ dependencies = [
     { name = "scipy" },
     { name = "torch" },
     { name = "torch-geometric" },
+    { name = "tqdm" },
     { name = "uvicorn", extra = ["standard"] },
     { name = "wntr" },
 ]
@@ -197,6 +198,7 @@ requires-dist = [
     { name = "scipy", specifier = ">=1.10.0" },
     { name = "torch", specifier = ">=2.0.0" },
     { name = "torch-geometric", specifier = ">=2.4.0" },
+    { name = "tqdm", specifier = ">=4.66.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.34.0" },
     { name = "wntr", specifier = ">=1.1.0" },
 ]
