@@ -1,9 +1,11 @@
+"""AI-powered leak report generation via Gemini API."""
+
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-import asyncio
 import os
 import httpx
+import traceback
 
 router = APIRouter(prefix="/api/report", tags=["report"])
 
@@ -15,77 +17,66 @@ class ReportRequest(BaseModel):
 
 @router.post("")
 async def generate_report(req: ReportRequest):
-    """Generate a natural-language leak report using Gemini."""
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        raise HTTPException(status_code=500, detail="Missing GEMINI_API_KEY")
+    try:
+        api_key = os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            raise HTTPException(status_code=500, detail="Missing GEMINI_API_KEY")
 
-    # Build a concise summary of pipeline results for the prompt
-    leak_lines = []
-    for i, leak in enumerate(req.leaks, 1):
-        wo = leak.get("work_order", {})
-        leak_lines.append(
-            f"  {i}. Node/Pipe: {wo.get('dispatch_target', leak.get('detected_node', 'Unknown'))}, "
-            f"Detected: {leak.get('estimated_start_time', 'N/A')}, "
-            f"CUSUM Severity: {leak.get('estimated_cusum_severity', 0):.1f}, "
-            f"Water Loss: {wo.get('gallons_lost_per_hour', 'N/A')} gal/hr, "
-            f"Cost: ${wo.get('cost_per_hour', 'N/A')}/hr, "
-            f"Confidence: {wo.get('confidence_score', 'N/A')}%"
-        )
+        # Build prompt
+        leak_lines = []
+        for i, leak in enumerate(req.leaks, 1):
+            wo = leak.get("work_order", {})
+            leak_lines.append(
+                f"  {i}. Node/Pipe: {wo.get('dispatch_target', leak.get('detected_node', 'Unknown'))}, "
+                f"Detected: {leak.get('estimated_start_time', 'N/A')}, "
+                f"Severity: {leak.get('estimated_cusum_severity', 0):.1f}, "
+                f"Loss: {wo.get('gallons_lost_per_hour', 'N/A')} gal/hr, "
+                f"Cost: ${wo.get('cost_per_hour', 'N/A')}/hr, "
+                f"Confidence: {wo.get('confidence_score', 'N/A')}%"
+            )
 
-    metrics_text = ""
-    if req.metrics:
-        metrics_text = (
-            f"\nPipeline Metrics:\n"
-            f"  - Leaks detected: {req.metrics.get('leaks_detected', 'N/A')}\n"
-            f"  - Ground truth leaks: {req.metrics.get('ground_truth_leaks', 'N/A')}\n"
-            f"  - Mean localization error: {req.metrics.get('mean_localization_error', 'N/A')}m\n"
-            f"  - Baseline error: {req.metrics.get('baseline_error', 'N/A')}m\n"
-            f"  - Improvement: {req.metrics.get('improvement_pct', 'N/A')}%\n"
-        )
+        metrics_text = ""
+        if req.metrics:
+            metrics_text = (
+                f"\nPipeline Metrics:\n"
+                f"  - Leaks detected: {req.metrics.get('leaks_detected', 'N/A')}\n"
+                f"  - Ground truth leaks: {req.metrics.get('ground_truth_leaks', 'N/A')}\n"
+                f"  - Mean localization error: {req.metrics.get('mean_localization_error', 'N/A')}m\n"
+                f"  - Improvement: {req.metrics.get('improvement_pct', 'N/A')}%\n"
+            )
 
-    prompt = f"""You are AquaGuard, an AI-powered water leak detection system for city water networks.
-Write a professional, concise incident report summarizing the following leak detection results from the L-TOWN water network.
-Include actionable recommendations for city water authorities. Use clear headings and keep it under 300 words.
+        prompt = f"""You are AquaGuard, an AI water leak detection system.
+Write a professional incident report summarizing these leak detection results from the L-TOWN water network.
+Include actionable recommendations. Use clear headings. Keep it under 300 words.
 
 Detected Leaks:
 {chr(10).join(leak_lines)}
 {metrics_text}
 Write the report now:"""
 
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
+        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent"
+        headers = {"Content-Type": "application/json", "X-goog-api-key": api_key}
+        payload = {"contents": [{"parts": [{"text": prompt}]}]}
 
-    payload = {
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {
-            "temperature": 0.7,
-            "maxOutputTokens": 1024,
-        },
-    }
+        print(f"[Report] Sending request to Gemini ({len(leak_lines)} leaks)...")
 
-    # Retry up to 3 times on rate-limit (429)
-    last_error = None
-    for attempt in range(3):
         async with httpx.AsyncClient(timeout=30) as client:
-            response = await client.post(url, json=payload)
+            response = await client.post(url, json=payload, headers=headers)
 
-        if response.status_code == 200:
-            break
-        elif response.status_code == 429:
-            last_error = "Rate limited by Gemini API. Retrying..."
-            await asyncio.sleep(2 * (attempt + 1))  # 2s, 4s, 6s backoff
-        else:
-            raise HTTPException(
-                status_code=response.status_code,
-                detail=f"Gemini API error: {response.text[:200]}"
-            )
-    else:
-        raise HTTPException(status_code=429, detail="Gemini rate limit exceeded. Please wait a moment and try again.")
+        print(f"[Report] Gemini response status: {response.status_code}")
 
-    data = response.json()
-    try:
+        if response.status_code != 200:
+            detail = response.text[:200]
+            print(f"[Report] Gemini error: {detail}")
+            raise HTTPException(status_code=response.status_code, detail=f"Gemini API error: {detail}")
+
+        data = response.json()
         text = data["candidates"][0]["content"]["parts"][0]["text"]
-    except (KeyError, IndexError):
-        raise HTTPException(status_code=500, detail="Unexpected Gemini response format")
+        print(f"[Report] Success! Report length: {len(text)} chars")
+        return JSONResponse({"report": text})
 
-    return JSONResponse({"report": text})
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[Report] Unexpected error: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=str(e))

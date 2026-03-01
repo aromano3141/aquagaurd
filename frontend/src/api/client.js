@@ -5,8 +5,20 @@ export async function fetchApi(endpoint, options = {}) {
         headers: { 'Content-Type': 'application/json', ...options.headers },
         ...options,
     });
-    if (!res.ok) throw new Error(`API error: ${res.status}`);
-    return res.json();
+
+    // Safely parse JSON, fallback to text if it's not JSON
+    const textData = await res.text();
+    let data;
+    try {
+        data = JSON.parse(textData);
+    } catch {
+        data = textData;
+    }
+
+    if (!res.ok) {
+        throw new Error(data?.detail || typeof data === 'string' ? data : `API error: ${res.status}`);
+    }
+    return data;
 }
 
 /* ── Pipeline ──────────────────────────────────────────────────────────── */

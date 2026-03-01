@@ -34,6 +34,7 @@ temp.rpt
 *.bin
 temp.*
 large_files.txt
+.pipeline_cache.json
 
 
 #images

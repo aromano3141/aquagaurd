@@ -8,7 +8,12 @@ import { Auth0Provider } from '@auth0/auth0-react'
 
 const queryClient = new QueryClient({
   defaultOptions: {
-    queries: { staleTime: 5 * 60 * 1000, retry: 1 },
+    queries: {
+      staleTime: 10 * 60 * 1000,   // 10 minutes — pipeline is expensive
+      retry: 3,                     // retry up to 3 times
+      retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 10000),
+      refetchOnWindowFocus: true,   // re-check when user tabs back
+    },
   },
 })
 

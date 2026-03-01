@@ -7,8 +7,8 @@ import { Map, Sparkles, Loader2 } from 'lucide-react'
 
 export default function NetworkOverview() {
     const { data: network, isLoading: netLoading } = useQuery({ queryKey: ['network'], queryFn: getNetwork })
-    const { data: gt } = useQuery({ queryKey: ['groundTruth'], queryFn: getGroundTruth })
-    const { data: predictions } = useQuery({ queryKey: ['pipeline'], queryFn: getPipelineResults })
+    const { data: gt, isLoading: gtLoading } = useQuery({ queryKey: ['groundTruth'], queryFn: getGroundTruth })
+    const { data: predictions, isLoading: predLoading } = useQuery({ queryKey: ['pipeline'], queryFn: getPipelineResults })
 
     const [report, setReport] = useState(null)
     const [reportLoading, setReportLoading] = useState(false)
@@ -17,11 +17,26 @@ export default function NetworkOverview() {
     const handleGenerateReport = async () => {
         setReportLoading(true)
         setReportError(null)
+        console.log("Starting report generation...")
         try {
+            console.log("Fetching metrics...")
             const metrics = await getPipelineMetrics()
-            const data = await generateReport(predictions, metrics)
+            console.log("Metrics fetched:", metrics)
+
+            // Strip out massive heatmap arrays to keep payload small
+            const simplifiedLeaks = predictions.map(p => ({
+                detected_node: p.detected_node,
+                estimated_start_time: p.estimated_start_time,
+                estimated_cusum_severity: p.estimated_cusum_severity,
+                work_order: p.work_order
+            }))
+
+            console.log("Sending to Gemini:", simplifiedLeaks.length, "leaks")
+            const data = await generateReport(simplifiedLeaks, metrics)
+            console.log("Report generated successfully!")
             setReport(data.report)
         } catch (e) {
+            console.error("Report generation failed:", e)
             setReportError(e.message)
         } finally {
             setReportLoading(false)
@@ -36,12 +51,26 @@ export default function NetworkOverview() {
         )
     }
 
+    const anyLoading = gtLoading || predLoading
+
     return (
         <div>
             <h2 className="flex items-center gap-2 text-2xl font-bold mb-1 gradient-text"><Map className="w-6 h-6" /> L-TOWN Water Network</h2>
-            <p className="text-sm text-[var(--color-text-dim)] mb-6">
+            <p className="text-sm text-[var(--color-text-dim)] mb-4">
                 Interactive visualization of the water distribution network with detected and ground-truth leaks overlaid.
             </p>
+
+            {/* Data loading status */}
+            {anyLoading && (
+                <div className="flex items-center gap-3 mb-4 px-4 py-2.5 rounded-lg bg-[rgba(79,172,254,0.08)] border border-[rgba(79,172,254,0.15)]">
+                    <Loader2 className="w-4 h-4 animate-spin text-[var(--color-accent)]" />
+                    <span className="text-xs text-[var(--color-text-dim)]">
+                        {predLoading && gtLoading ? 'Running leak detection pipeline & loading ground truth...'
+                            : predLoading ? 'Running leak detection pipeline (this may take a minute on first load)...'
+                                : 'Loading ground truth data...'}
+                    </span>
+                </div>
+            )}
 
             {/* Metric Cards */}
             <div className="grid grid-cols-4 gap-4 mb-6">
