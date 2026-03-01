@@ -62,7 +62,7 @@ async def generate_network(
     density: float = Query(0.3, ge=0.0, le=1.0),
 ):
     """Procedurally generate a grid-based water network."""
-    rng = np.random.RandomState(rows * 100 + cols * 10 + sensors)
+    rng = np.random.RandomState(rows * 100 + cols * 10 + sensors + int(density * 1000))
     spacing = 100.0
 
     nodes = []
