@@ -1,8 +1,12 @@
 """City sandbox API endpoints."""
 
-from fastapi import APIRouter, Query
+import os
+from pathlib import Path
+from fastapi import APIRouter, Query, UploadFile, File, HTTPException
 from pydantic import BaseModel
 import numpy as np
+
+from app.core.zone_inference import detect_zones
 
 router = APIRouter(prefix="/api/sandbox", tags=["sandbox"])
 
@@ -11,7 +15,7 @@ router = APIRouter(prefix="/api/sandbox", tags=["sandbox"])
 async def generate_network(
     rows: int = Query(6, ge=3, le=15),
     cols: int = Query(8, ge=3, le=15),
-    sensors: int = Query(5, ge=2, le=20),
+    sensors: int = Query(5, ge=2, le=50),
     density: float = Query(0.3, ge=0.0, le=1.0),
 ):
     """Procedurally generate a grid-based water network."""
@@ -83,6 +87,7 @@ async def simulate(req: SimulateRequest):
 
         weights = []
         coords_list = []
+        node_names = []
         for sn, sc in sensor_coords.items():
             dist = np.linalg.norm(true_coord - sc) + 1e-6
             noise_scale = dist * 0.05
@@ -90,15 +95,34 @@ async def simulate(req: SimulateRequest):
             w = 1.0 / (dist ** 2)
             weights.append(w)
             coords_list.append(noisy_sc)
+            node_names.append(sn)
 
-        top_idx = np.argsort(weights)[-3:]
+        top_idx = np.argsort(weights)[-5:]
         top_w = np.array([weights[i] for i in top_idx])
         top_c = np.array([coords_list[i] for i in top_idx])
+        top_nodes = [node_names[i] for i in top_idx]
+        
         top_w_norm = top_w / top_w.sum()
         pred_coord = np.sum(top_c * top_w_norm[:, None], axis=0)
 
         err = float(np.linalg.norm(pred_coord - true_coord))
         errors.append(err)
+        
+        # Estimate metrics for Work Order
+        gallons_lost = int(rng.uniform(500, 3000))
+        cost_per_hour = round(gallons_lost * rng.uniform(0.01, 0.05), 2)
+        dispatch_target = top_nodes[-1] # Highest weight node
+
+        # Heatmap array
+        heatmap = []
+        for i in range(len(top_idx)):
+            heatmap.append({
+                "x": float(top_c[i][0]),
+                "y": float(top_c[i][1]),
+                "weight": float(top_w_norm[i]),
+                "node": top_nodes[i]
+            })
+
         predictions.append({
             "pipe": lpid,
             "true_x": float(true_coord[0]),
@@ -106,7 +130,14 @@ async def simulate(req: SimulateRequest):
             "pred_x": float(pred_coord[0]),
             "pred_y": float(pred_coord[1]),
             "error": round(err, 2),
-            "rating": "excellent" if err < 30 else ("good" if err < 80 else "fair"),
+            "rating": "excellent" if err < 30 else ("good" if err < 80 else "poor"),
+            "heatmap": heatmap,
+            "work_order": {
+                "dispatch_target": dispatch_target,
+                "gallons_lost_per_hour": gallons_lost,
+                "cost_per_hour": cost_per_hour,
+                "confidence_score": round(float(top_w_norm[-1]) * 100, 1)
+            }
         })
 
     mean_error = float(np.mean(errors)) if errors else 0
@@ -119,3 +150,50 @@ async def simulate(req: SimulateRequest):
         "max_error": round(max_error, 1),
         "accuracy_pct": round(accuracy, 0),
     }
+
+
+@router.post("/upload-network")
+async def upload_network(file: UploadFile = File(...)):
+    """Upload a custom .inp water network file."""
+    if not file.filename.endswith(".inp"):
+        raise HTTPException(status_code=400, detail="Only .inp files are supported")
+        
+    upload_dir = Path("data/uploaded_networks")
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    
+    file_path = upload_dir / file.filename
+    with open(file_path, "wb") as f:
+        content = await file.read()
+        f.write(content)
+        
+    return {"filename": file.filename, "status": "success"}
+
+
+@router.post("/detect-zones")
+async def run_zone_detection(filename: str):
+    """Run the universal zone-level leak detection model on an uploaded network."""
+    file_path = Path("data/uploaded_networks") / filename
+    if not file_path.exists():
+        # Fallback to sample networks
+        file_path = Path("data/sample_networks") / filename
+        if not file_path.exists():
+            raise HTTPException(status_code=404, detail="Network file not found")
+            
+    try:
+        results = detect_zones(str(file_path), top_k_zones=10)
+        
+        # Add work order info to the top zone for the UI
+        top_zone = results["zones"][0] if results["zones"] else None
+        if top_zone:
+            gallons_lost = int(top_zone["probability"] * 1000 + 500)
+            cost_per_hour = round(gallons_lost * 0.03, 2)
+            results["work_order"] = {
+                "dispatch_target": top_zone["id"],
+                "gallons_lost_per_hour": gallons_lost,
+                "cost_per_hour": cost_per_hour,
+                "confidence_score": round(top_zone["probability"] * 100, 1)
+            }
+            
+        return results
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Inference failed: {str(e)}")

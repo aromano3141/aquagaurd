@@ -37,12 +37,40 @@ def run_pipeline() -> list[dict]:
     wn = wntr.network.WaterNetworkModel(str(_EPANET_FILE))
     results_list = []
     for node, ts in detected_leaks.items():
-        gps = detector.triangulate(ts, computed_df_cs, wn, detector.pressures, w_gnn=0.5, w_ent=2.0)
+        res = detector.triangulate(ts, computed_df_cs, wn, detector.pressures, w_gnn=0.5, w_ent=2.0)
+        gps = res[0]
+        coords_list = res[1] or []
+        weights_list = res[2] or []
+        node_names = res[3] or []
+        
         severity = float(computed_df_cs.loc[ts, node]) if node in computed_df_cs.columns else 0.0
+        
+        heatmap = []
+        for i in range(len(coords_list)):
+            heatmap.append({
+                "x": float(coords_list[i][0]),
+                "y": float(coords_list[i][1]),
+                "weight": float(weights_list[i]),
+                "node": node_names[i]
+            })
+            
+        # Simulated Work Order logic for real data
+        gallons_lost = int(severity * 1000 + 500)
+        cost_per = round(gallons_lost * 0.03, 2)
+        dispatch_target = node_names[-1] if node_names else node
+        conf = float(weights_list[-1]) * 100 if weights_list else 0.0
+
         results_list.append({
             "detected_node": node, "estimated_start_time": str(ts),
             "gps_coordinates": list(gps) if gps else None,
             "estimated_cusum_severity": severity,
+            "heatmap": heatmap,
+            "work_order": {
+                "dispatch_target": dispatch_target,
+                "gallons_lost_per_hour": gallons_lost,
+                "cost_per_hour": cost_per,
+                "confidence_score": round(conf, 1)
+            }
         })
 
     _results = results_list

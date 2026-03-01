@@ -67,6 +67,25 @@ export default function NetworkMap({ network, predictions, groundTruth, showGt =
         // Predicted leaks
         if (showPred && predictions?.length) {
             const validPreds = predictions.filter(p => p.gps_coordinates)
+
+            // 1. Heatmap layer (draw first so it renders underneath)
+            for (const p of validPreds) {
+                if (p.heatmap) {
+                    p.heatmap.forEach(h => {
+                        data.push({
+                            x: [h.x], y: [h.y], mode: 'markers',
+                            marker: {
+                                size: (h.weight * 120) + 30,
+                                color: `rgba(255, 71, 87, ${h.weight * 0.4})`,
+                                line: { width: 0 }
+                            },
+                            hoverinfo: 'text', text: `IDW Probability: ${(h.weight * 100).toFixed(1)}%`,
+                            name: 'Probability Heatmap', showlegend: false, type: 'scatter'
+                        })
+                    })
+                }
+            }
+
             const maxSev = Math.max(...validPreds.map(p => p.estimated_cusum_severity), 1)
             data.push({
                 x: validPreds.map(p => p.gps_coordinates[0]),

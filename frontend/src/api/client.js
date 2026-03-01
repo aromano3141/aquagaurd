@@ -42,3 +42,18 @@ export const generateSandbox = (rows, cols, sensors, density) =>
 
 export const simulateSandbox = (body) =>
     fetchApi('/sandbox/simulate', { method: 'POST', body: JSON.stringify(body) });
+
+/* ── Universal Model ───────────────────────────────────────────────────── */
+export const uploadNetwork = async (file) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    const res = await fetch(`${API_BASE}/sandbox/upload-network`, {
+        method: 'POST',
+        body: formData,
+    });
+    if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
+    return res.json();
+};
+
+export const detectZones = (filename) =>
+    fetchApi(`/sandbox/detect-zones?filename=${encodeURIComponent(filename)}`, { method: 'POST' });

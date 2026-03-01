@@ -42,9 +42,20 @@ export default function Layout() {
 
                 <div className="mx-6 my-3 h-px bg-[var(--color-border)]" />
 
-                <div className="px-6 pb-6 space-y-1">
-                    <p className="text-xs text-[var(--color-text-dimmer)]">Built with LILA + GNN Entropy Features</p>
-                    <p className="text-xs text-[var(--color-text-dimmest)]">BattLeDIM 2020 Competition Dataset</p>
+                <div className="px-6 pb-6 space-y-3">
+                    <div className="bg-[rgba(79,172,254,0.05)] border border-[var(--color-border)] rounded-lg p-3">
+                        <p className="text-[10px] uppercase font-bold text-[var(--color-text-dim)] tracking-wider mb-1">Active City Network</p>
+                        <div className="flex items-center justify-between">
+                            <span className="text-sm font-semibold text-white">L-TOWN (Demo)</span>
+                            <span className="w-2 h-2 rounded-full bg-[#2ed573] animate-pulse"></span>
+                        </div>
+                    </div>
+
+                    <button className="w-full py-2 text-xs text-[var(--color-accent)] border border-[rgba(79,172,254,0.3)] hover:bg-[rgba(79,172,254,0.1)] rounded-lg transition-colors font-medium">
+                        + Import City (.inp)
+                    </button>
+
+                    <p className="text-[10px] text-center text-[var(--color-text-dimmest)] pt-2">Universal Topology Engine v1.0</p>
                 </div>
             </aside>
 

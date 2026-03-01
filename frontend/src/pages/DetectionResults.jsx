@@ -77,6 +77,40 @@ export default function DetectionResults() {
                 </div>
             </div>
 
+            {/* Maintenance Dispatch Orders (High Severity only) */}
+            <SectionHeader>Maintenance Dispatch Orders</SectionHeader>
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 mb-8">
+                {results.filter(r => r.estimated_cusum_severity > q75).slice(0, 6).map((p, i) => (
+                    <div key={i} className="bg-[rgba(10,14,39,0.7)] border border-[rgba(255,71,87,0.3)] rounded-xl p-4 flex flex-col relative overflow-hidden">
+                        <div className="absolute top-0 right-0 w-24 h-24 bg-[#ff4757] opacity-[0.05] rounded-bl-full" />
+                        <div className="text-[#ff4757] font-bold mb-1 text-[10px] uppercase tracking-wider flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-[#ff4757] animate-pulse"></span>
+                            Priority Leak Action
+                        </div>
+                        <h4 className="text-xl font-bold mb-3 tracking-wide">Target: {p.work_order?.dispatch_target || `Node ${p.detected_node}`}</h4>
+
+                        <div className="space-y-2 text-sm text-[var(--color-text-dim)] flex-grow">
+                            <div className="flex justify-between border-b border-[rgba(255,255,255,0.05)] pb-1">
+                                <span>AI Confidence:</span>
+                                <span className="text-white font-mono">{p.work_order?.confidence_score ?? '--'}%</span>
+                            </div>
+                            <div className="flex justify-between border-b border-[rgba(255,255,255,0.05)] pb-1">
+                                <span>Est. Water Loss:</span>
+                                <span className="text-[#ffa502] font-mono">{p.work_order?.gallons_lost_per_hour ?? '--'} gal/hr</span>
+                            </div>
+                            <div className="flex justify-between">
+                                <span>Economic Impact:</span>
+                                <span className="text-[#ff4757] font-mono">${p.work_order?.cost_per_hour ?? '--'}/hr</span>
+                            </div>
+                        </div>
+
+                        <button className="mt-4 w-full py-2.5 bg-[rgba(255,71,87,0.1)] hover:bg-[rgba(255,71,87,0.2)] text-[#ff4757] font-semibold text-sm rounded-lg transition-colors border border-[rgba(255,71,87,0.3)] hover:border-[#ff4757]">
+                            Dispatch Repair Team
+                        </button>
+                    </div>
+                ))}
+            </div>
+
             {/* Results Table */}
             <SectionHeader>Detailed Detection Log</SectionHeader>
             <div className="rounded-xl border border-[var(--color-border-subtle)] overflow-hidden mb-8"

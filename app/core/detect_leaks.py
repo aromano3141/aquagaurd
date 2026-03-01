@@ -305,6 +305,7 @@ class LeakDetector:
 
         coords = []
         weights = []
+        node_names = []
         
         window_start = timestamp - self.est_length
 
@@ -329,9 +330,10 @@ class LeakDetector:
                 
                 coords.append(node_obj.coordinates)
                 weights.append(node_weight)
+                node_names.append(node)
                 
         if not coords:
-            return None
+            return None, None, None, None
             
         weights = np.array(weights)
         if np.sum(weights) == 0:
@@ -341,7 +343,7 @@ class LeakDetector:
         coords = np.array(coords)
         predicted_coord = np.sum(coords * weights[:, np.newaxis], axis=0)
 
-        return tuple(predicted_coord)
+        return tuple(predicted_coord), coords.tolist(), weights.tolist(), node_names
 
 class LILA_Pipeline:
     def __init__(self, data_dir, epanet_file=None):
@@ -419,9 +421,10 @@ def evaluate_accuracy(detected_leaks, computed_df_cs, detector_obj, network, gro
             
     distances = []
     for node, start_time in detected_leaks.items():
-        pred_coord = detector_obj.triangulate(start_time, computed_df_cs, network, detector_obj.pressures, w_gnn=0.5, w_ent=2.0)
-        if pred_coord is None:
+        res = detector_obj.triangulate(start_time, computed_df_cs, network, detector_obj.pressures, w_gnn=0.5, w_ent=2.0)
+        if res[0] is None:
             continue
+        pred_coord = res[0]
             
         # Find minimum distance to any known ground truth leak
         min_dist = float('inf')
