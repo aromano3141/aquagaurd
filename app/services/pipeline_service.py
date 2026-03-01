@@ -27,7 +27,7 @@ def run_pipeline() -> list[dict]:
         return _results
 
     pipe = LILA_Pipeline(data_dir=str(_SCADA_DIR), epanet_file=str(_EPANET_FILE))
-    detected_leaks, computed_df_cs, detector = pipe.run()
+    detected_leaks, computed_df_cs, detector, fault_matrix = pipe.run()
 
     _pipeline = pipe
     _detector = detector
@@ -37,11 +37,18 @@ def run_pipeline() -> list[dict]:
     wn = wntr.network.WaterNetworkModel(str(_EPANET_FILE))
     results_list = []
     for node, ts in detected_leaks.items():
-        res = detector.triangulate(ts, computed_df_cs, wn, detector.pressures, w_gnn=0.5, w_ent=2.0)
+        if fault_matrix:
+            res = detector.localize_physics_based(ts, computed_df_cs, wn, fault_matrix)
+        else:
+            res = detector.triangulate(ts, computed_df_cs, wn, detector.pressures, w_gnn=0.5, w_ent=2.0)
+            
+        if res[0] is None:
+            continue
         gps = res[0]
         coords_list = res[1] or []
         weights_list = res[2] or []
         node_names = res[3] or []
+        snapped_pipe = res[4] if len(res) > 4 else None
         
         severity = float(computed_df_cs.loc[ts, node]) if node in computed_df_cs.columns else 0.0
         
@@ -57,11 +64,11 @@ def run_pipeline() -> list[dict]:
         # Simulated Work Order logic for real data
         gallons_lost = int(severity * 1000 + 500)
         cost_per = round(gallons_lost * 0.03, 2)
-        dispatch_target = node_names[np.argmax(weights_list)] if weights_list else node
+        dispatch_target = res[4] if len(res) > 4 and res[4] else (node_names[np.argmax(weights_list)] if weights_list else node)
         conf = float(np.max(weights_list)) * 100 if weights_list else 0.0
 
         results_list.append({
-            "detected_node": node, "estimated_start_time": str(ts),
+            "detected_node": dispatch_target, "estimated_start_time": str(ts),
             "gps_coordinates": list(gps) if gps else None,
             "estimated_cusum_severity": severity,
             "heatmap": heatmap,

@@ -27,6 +27,29 @@ def get_baseline_pressures(file_path: str):
     results = sim.run_sim()
     return results.node["pressure"].iloc[-1].to_dict()
 
+def snap_prediction_to_pipe(pred_coord, pipe_map, node_map):
+    min_dist = float('inf')
+    best_coord = pred_coord
+    best_pipe = None
+    p = np.array(pred_coord)
+    for pid, pipe in pipe_map.items():
+        a = node_map[pipe["start"]][:2]
+        b = node_map[pipe["end"]][:2]
+        ab = b - a
+        ap = p - a
+        dot = np.dot(ab, ab)
+        if dot == 0:
+            proj = a
+        else:
+            t = np.clip(np.dot(ap, ab) / dot, 0.0, 1.0)
+            proj = a + t * ab
+        d = np.linalg.norm(p - proj)
+        if d < min_dist:
+            min_dist = d
+            best_coord = proj
+            best_pipe = pid
+    return best_coord, best_pipe
+
 
 router = APIRouter(prefix="/api/sandbox", tags=["sandbox"])
 
@@ -203,7 +226,9 @@ async def simulate(req: SimulateRequest):
             top_c = np.array([node_map[n] for n in top_nodes])
             
             top_w_norm = top_w / top_w.sum()
-            pred_coord = np.sum(top_c * top_w_norm[:, None], axis=0)
+            raw_pred_coord = np.sum(top_c * top_w_norm[:, None], axis=0)
+
+            pred_coord, snapped_pipe = snap_prediction_to_pipe(raw_pred_coord, pipe_map, node_map)
 
             err = float(np.linalg.norm(pred_coord - true_coord))
             errors.append(err)
@@ -230,7 +255,7 @@ async def simulate(req: SimulateRequest):
                 "rating": "excellent" if err < 50 else ("good" if err < 150 else "poor"),
                 "heatmap": heatmap,
                 "work_order": {
-                    "dispatch_target": top_nodes[0],
+                    "dispatch_target": snapped_pipe if snapped_pipe else top_nodes[0],
                     "gallons_lost_per_hour": gallons_lost,
                     "cost_per_hour": cost_per_hour,
                     "confidence_score": round(float(top_w_norm[0]) * 100, 1)
@@ -268,7 +293,9 @@ async def simulate(req: SimulateRequest):
             top_nodes = [node_names[i] for i in top_idx]
 
             top_w_norm = top_w / top_w.sum()
-            pred_coord = np.sum(top_c * top_w_norm[:, None], axis=0)
+            raw_pred_coord = np.sum(top_c * top_w_norm[:, None], axis=0)
+
+            pred_coord, snapped_pipe = snap_prediction_to_pipe(raw_pred_coord, pipe_map, node_map)
 
             err = float(np.linalg.norm(pred_coord - true_coord))
             errors.append(err)
@@ -295,7 +322,7 @@ async def simulate(req: SimulateRequest):
                 "rating": "excellent" if err < 30 else ("good" if err < 80 else "poor"),
                 "heatmap": heatmap,
                 "work_order": {
-                    "dispatch_target": top_nodes[-1],
+                    "dispatch_target": snapped_pipe if snapped_pipe else top_nodes[-1],
                     "gallons_lost_per_hour": gallons_lost,
                     "cost_per_hour": cost_per_hour,
                     "confidence_score": round(float(top_w_norm[-1]) * 100, 1)

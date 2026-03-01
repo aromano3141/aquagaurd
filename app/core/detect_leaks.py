@@ -16,6 +16,8 @@ from sklearn.preprocessing import StandardScaler
 from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
 from torch_geometric.nn import GATv2Conv
+import pickle
+import copy
 
 from tqdm import tqdm
 from .models import AnomalyLeakDetector
@@ -428,7 +430,130 @@ class LeakDetector:
         coords = np.array(coords)
         predicted_coord = np.sum(coords * weights[:, np.newaxis], axis=0)
 
-        return tuple(predicted_coord), coords.tolist(), weights.tolist(), node_names
+        # Snap to nearest pipe topology
+        p = np.array(predicted_coord)
+        min_dist = float('inf')
+        snapped_coord = p
+        snapped_pipe = None
+        for name, link in network.links():
+            a = np.array(network.get_node(link.start_node_name).coordinates)
+            b = np.array(network.get_node(link.end_node_name).coordinates)
+            ab = b - a
+            ap = p - a
+            dot = np.dot(ab, ab)
+            if dot == 0:
+                proj = a
+            else:
+                t = np.clip(np.dot(ap, ab) / dot, 0.0, 1.0)
+                proj = a + t * ab
+            d = np.linalg.norm(p - proj)
+            if d < min_dist:
+                min_dist = d
+                snapped_coord = proj
+                snapped_pipe = name
+
+        return tuple(snapped_coord), coords.tolist(), weights.tolist(), node_names, snapped_pipe
+
+    def build_fault_matrix(self, network, epanet_file_path):
+        cache_path = Path(epanet_file_path).with_suffix('.fault_matrix.pkl')
+        if cache_path.exists():
+            print(f"Loading cached Fault Matrix from {cache_path}")
+            with open(cache_path, 'rb') as f:
+                return pickle.load(f)
+
+        print("Building Physics-Based Fault Matrix (This may take a minute...)")
+        wn_base = copy.deepcopy(network)
+        sim_base = wntr.sim.EpanetSimulator(wn_base)
+        base_res = sim_base.run_sim()
+        base_pressures = base_res.node["pressure"].iloc[-1]
+
+        fault_matrix = {}
+        for pipe_id in tqdm(network.pipe_name_list, desc="Simulating Pipe Leaks"):
+            wn_leak = copy.deepcopy(network)
+            leak_node = wn_leak.get_link(pipe_id).start_node_name
+            node = wn_leak.get_node(leak_node)
+            leak_area = np.pi * (0.015) ** 2
+            node.emitter_coefficient = 0.75 * leak_area * np.sqrt(2 * 9.81)
+            
+            sim_leak = wntr.sim.EpanetSimulator(wn_leak)
+            try:
+                leak_res = sim_leak.run_sim()
+                leak_pressures = leak_res.node["pressure"].iloc[-1]
+            except Exception:
+                continue
+            
+            drop_vector = {}
+            for s in self.nodes:
+                if s in base_pressures and s in leak_pressures:
+                    drop_vector[s] = max(0, float(base_pressures[s] - leak_pressures[s]))
+                else:
+                    drop_vector[s] = 0.0
+            
+            fault_matrix[pipe_id] = drop_vector
+            
+        with open(cache_path, 'wb') as f:
+            pickle.dump(fault_matrix, f)
+            
+        return fault_matrix
+
+    def localize_physics_based(self, timestamp, df_cs, network, fault_matrix):
+        """
+        Matches real SCADA pressure drop residuals to the simulated Fault Matrix.
+        """
+        cusum_at_t = df_cs.loc[timestamp]
+        
+        real_vector = np.array([max(0, float(cusum_at_t.get(s, 0.0))) for s in self.nodes])
+        real_norm = np.linalg.norm(real_vector)
+        
+        if real_norm == 0:
+            return None, None, None, None, None
+            
+        best_pipe = None
+        best_sim = -1
+        pipe_sims = {}
+        
+        for pipe_id, drop_dict in fault_matrix.items():
+            sim_vector = np.array([drop_dict.get(s, 0.0) for s in self.nodes])
+            sim_norm = np.linalg.norm(sim_vector)
+            
+            if sim_norm == 0:
+                sim = 0
+            else:
+                sim = np.dot(real_vector, sim_vector) / (real_norm * sim_norm)
+                
+            pipe_sims[pipe_id] = float(sim)
+            if sim > best_sim:
+                best_sim = sim
+                best_pipe = pipe_id
+                
+        if not best_pipe:
+            return None, None, None, None, None
+            
+        link = network.get_link(best_pipe)
+        a = np.array(network.get_node(link.start_node_name).coordinates)
+        b = np.array(network.get_node(link.end_node_name).coordinates)
+        best_coord = (a + b) / 2
+        
+        sorted_pipes = sorted(pipe_sims.items(), key=lambda x: x[1], reverse=True)[:30]
+        
+        coords_list = []
+        weights_list = []
+        node_names = []
+        
+        for pid, sim in sorted_pipes:
+            if sim < 0.1: continue
+            l = network.get_link(pid)
+            ca = np.array(network.get_node(l.start_node_name).coordinates)
+            cb = np.array(network.get_node(l.end_node_name).coordinates)
+            coords_list.append(((ca + cb) / 2).tolist())
+            weights_list.append(sim ** 3) 
+            node_names.append(pid)
+            
+        w_sum = sum(weights_list)
+        if w_sum > 0:
+            weights_list = [w / w_sum for w in weights_list]
+            
+        return tuple(best_coord), coords_list, weights_list, node_names, best_pipe
 
 class LILA_Pipeline:
     def __init__(self, data_dir, epanet_file=None):
@@ -464,6 +589,16 @@ class LILA_Pipeline:
         self.load_data()
         self.load_network()
         
+        cor_time_frame = ['2019-01-01 00:00', '2019-01-14 23:55']
+        
+        detector = LeakDetector(self.pressures, self.flows)
+        
+        # Build or load Fault Matrix for exact physics-based matching
+        if self.epanet_file and self.network:
+            self.fault_matrix = detector.build_fault_matrix(self.network, self.epanet_file)
+        else:
+            self.fault_matrix = None
+        
         # Calibration time frame from the original notebook (no-leak period)
         cor_time_frame = ['2019-01-01 00:00', '2019-01-14 23:55']
         
@@ -478,7 +613,7 @@ class LILA_Pipeline:
         # 3. Extract Leak timestamps using CUSUM
         detected_leaks, computed_df_cs = detector.cusum_detect(mre_residuals)
         
-        return detected_leaks, computed_df_cs, detector
+        return detected_leaks, computed_df_cs, detector, self.fault_matrix
 
 def evaluate_accuracy(detected_leaks, computed_df_cs, detector_obj, network, ground_truth_path, w_gnn=1.0, w_ent=1.0):
     try:
@@ -505,8 +640,13 @@ def evaluate_accuracy(detected_leaks, computed_df_cs, detector_obj, network, gro
             true_coords.append((pipe_id, mid_coord))
             
     distances = []
+    fault_matrix = getattr(pipeline, 'fault_matrix', None)
     for node, start_time in detected_leaks.items():
-        res = detector_obj.triangulate(start_time, computed_df_cs, network, detector_obj.pressures, w_gnn=0.5, w_ent=2.0)
+        if fault_matrix:
+            res = detector_obj.localize_physics_based(start_time, computed_df_cs, network, fault_matrix)
+        else:
+            res = detector_obj.triangulate(start_time, computed_df_cs, network, detector_obj.pressures, w_gnn=0.5, w_ent=2.0)
+            
         if res[0] is None:
             continue
         pred_coord = res[0]
@@ -531,7 +671,7 @@ if __name__ == "__main__":
     GROUND_TRUTH_FILE = str(_ROOT / 'data' / 'leak_ground_truth' / '2019_Leakages.csv')
     
     pipeline = LILA_Pipeline(data_dir=DATA_DIR, epanet_file=EPANET_FILE)
-    detected_leaks, computed_df_cs, detector = pipeline.run()
+    detected_leaks, computed_df_cs, detector, fault_matrix = pipeline.run()
     
     print("\n--- Final Pipeline Results ---")
     dist = evaluate_accuracy(detected_leaks, computed_df_cs, detector, pipeline.network, GROUND_TRUTH_FILE, w_gnn=0.5, w_ent=2.0)
