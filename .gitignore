@@ -24,7 +24,6 @@ Thumbs.db
 frontend/dist/
 
 # Old files (already migrated)
-README.md
 TECHNICAL_WRITEUP.md
 error_log.txt
 temp.rpt
