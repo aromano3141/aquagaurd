@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from .routers import pipeline, sensors, network, savings, sandbox, dispatch
+from .routers import pipeline, sensors, network, savings, sandbox, dispatch, report
 
 app = FastAPI(
     title="AquaGuard API",
@@ -38,6 +38,7 @@ app.add_middleware(
 # Include routers
 app.include_router(pipeline.router)
 app.include_router(sensors.router)
+app.include_router(report.router)
 app.include_router(network.router)
 app.include_router(savings.router)
 app.include_router(sandbox.router)

@@ -1,11 +1,11 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import Plot from 'react-plotly.js'
-import { getSensorTimeseries, getPipelineResults, getNetwork, getGroundTruth } from '../api/client'
+import { getSensorTimeseries, getPipelineResults, getPipelineMetrics, getNetwork, getGroundTruth, generateReport } from '../api/client'
 import MetricCard from '../components/MetricCard'
 import SectionHeader from '../components/SectionHeader'
 import NetworkMap from '../components/NetworkMap'
-import { Activity, Database, BrainCircuit, BarChart3, AlertTriangle, Fingerprint, Crosshair } from 'lucide-react'
+import { Activity, Database, BrainCircuit, BarChart3, AlertTriangle, Fingerprint, Crosshair, Sparkles, Loader2 } from 'lucide-react'
 
 const STEPS = [
     { icon: <Database className="w-3.5 h-3.5" />, label: 'Data Ingestion' },
@@ -18,6 +18,8 @@ const STEPS = [
 
 export default function Simulation() {
     const [step, setStep] = useState(0)
+    const [report, setReport] = useState(null)
+    const [reportLoading, setReportLoading] = useState(false)
     const { data: results } = useQuery({ queryKey: ['pipeline'], queryFn: getPipelineResults })
     const { data: network } = useQuery({ queryKey: ['network'], queryFn: getNetwork })
     const { data: gt } = useQuery({ queryKey: ['groundTruth'], queryFn: getGroundTruth })
@@ -229,6 +231,40 @@ export default function Simulation() {
                             <MetricCard value="142.51m" label="Final Mean Error" sublabel="With GNN + Entropy + Fault Matrix" gradient="green" />
                             <MetricCard value="5.6%" label="Improvement" sublabel="Over baseline (151.03m)" gradient="green" />
                         </div>
+
+                        {/* AI Report Generator */}
+                        <div className="mt-6">
+                            <button
+                                onClick={async () => {
+                                    setReportLoading(true)
+                                    try {
+                                        const metrics = await getPipelineMetrics()
+                                        const data = await generateReport(results, metrics)
+                                        setReport(data.report)
+                                    } catch (e) {
+                                        setReport(`Error generating report: ${e.message}`)
+                                    } finally {
+                                        setReportLoading(false)
+                                    }
+                                }}
+                                disabled={reportLoading || !results}
+                                className="flex items-center gap-2 px-5 py-2.5 rounded-lg bg-gradient-to-r from-[rgba(79,172,254,0.15)] to-[rgba(46,213,115,0.15)] border border-[var(--color-accent)] text-[var(--color-accent)] text-sm font-semibold hover:from-[rgba(79,172,254,0.25)] hover:to-[rgba(46,213,115,0.25)] transition-all disabled:opacity-50 disabled:cursor-wait"
+                            >
+                                {reportLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                                {reportLoading ? 'Generating AI Report...' : 'Generate AI Report'}
+                            </button>
+                        </div>
+
+                        {report && (
+                            <div className="mt-4 p-5 rounded-xl border border-[rgba(79,172,254,0.2)] bg-[rgba(8,10,24,0.7)]">
+                                <h4 className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-[var(--color-accent)] mb-3">
+                                    <Sparkles className="w-3.5 h-3.5" /> AI-Generated Leak Report
+                                </h4>
+                                <div className="text-sm text-[var(--color-text-dim)] leading-relaxed whitespace-pre-wrap">
+                                    {report}
+                                </div>
+                            </div>
+                        )}
                     </>
                 )}
             </div>

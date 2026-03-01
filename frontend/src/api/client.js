@@ -63,3 +63,7 @@ export const dispatchAudio = async (nodeId) => {
     const blob = await res.blob();
     return URL.createObjectURL(blob);
 };
+
+/* ── AI Report ─────────────────────────────────────────────────────────── */
+export const generateReport = (leaks, metrics) =>
+    fetchApi('/report', { method: 'POST', body: JSON.stringify({ leaks, metrics }) });
