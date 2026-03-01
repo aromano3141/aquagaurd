@@ -289,7 +289,7 @@ async def simulate(req: SimulateRequest):
 
     mean_error = float(np.mean(errors)) if errors else 0
     max_error = float(np.max(errors)) if errors else 0
-    accuracy = (sum(1 for e in errors if e < 150) / len(errors) * 100) if errors else 0
+    accuracy = (sum(1 for e in errors if e < 50) / len(errors) * 100) if errors else 0
 
     return {
         "predictions": predictions,

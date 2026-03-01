@@ -136,7 +136,7 @@ export default function SandboxProcedural() {
             data.push({
                 x: leakCoords.map(l => l.x), y: leakCoords.map(l => l.y),
                 z: leakCoords.map(() => 0.3), mode: 'markers',
-                marker: { size: 7, color: '#ff4757', symbol: 'x', line: { width: 1, color: '#ff6b81' } },
+                marker: { size: 10, color: '#ff4757', symbol: 'circle', line: { width: 2, color: '#ff6b81' } },
                 text: leakCoords.map(l => `Leak: ${l.id}`), hoverinfo: 'text',
                 name: 'Placed Leaks', type: 'scatter3d',
             })

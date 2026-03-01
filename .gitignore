@@ -24,3 +24,9 @@ frontend/dist/
 # Old files (already migrated)
 README.md
 TECHNICAL_WRITEUP.md
+
+# Large Data & Binaries
+*.pt
+*.bin
+temp.*
+large_files.txt
